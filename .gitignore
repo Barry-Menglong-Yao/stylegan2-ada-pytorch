@@ -1,2 +1,6 @@
 __pycache__/
 .cache/
+out/**
+.vscode/**
+training-runs/**
+datasets/**

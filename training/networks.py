@@ -6,6 +6,7 @@
 # distribution of this software and related documentation without an express
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 
+ 
 import numpy as np
 import torch
 from torch_utils import misc
@@ -623,6 +624,7 @@ class DiscriminatorEpilogue(torch.nn.Module):
         mbstd_num_channels  = 1,        # Number of features for the minibatch standard deviation layer, 0 = disable.
         activation          = 'lrelu',  # Activation function: 'relu', 'lrelu', etc.
         conv_clamp          = None,     # Clamp the output of convolution layers to +-X, None = disable clamping.
+        gan_type=None,
     ):
         assert architecture in ['orig', 'skip', 'resnet']
         super().__init__()
@@ -631,12 +633,16 @@ class DiscriminatorEpilogue(torch.nn.Module):
         self.resolution = resolution
         self.img_channels = img_channels
         self.architecture = architecture
+        self.gan_type=gan_type
 
         if architecture == 'skip':
             self.fromrgb = Conv2dLayer(img_channels, in_channels, kernel_size=1, activation=activation)
         self.mbstd = MinibatchStdLayer(group_size=mbstd_group_size, num_channels=mbstd_num_channels) if mbstd_num_channels > 0 else None
         self.conv = Conv2dLayer(in_channels + mbstd_num_channels, in_channels, kernel_size=3, activation=activation, conv_clamp=conv_clamp)
         self.fc = FullyConnectedLayer(in_channels * (resolution ** 2), in_channels, activation=activation)
+        
+        if gan_type=="GAN_VAE":
+            self.out2 = FullyConnectedLayer(in_channels * (resolution ** 2), in_channels, activation=activation)
         self.out = FullyConnectedLayer(in_channels, 1 if cmap_dim == 0 else cmap_dim)
 
     def forward(self, x, img, cmap, force_fp32=False):
@@ -656,7 +662,11 @@ class DiscriminatorEpilogue(torch.nn.Module):
         if self.mbstd is not None:
             x = self.mbstd(x)
         x = self.conv(x)
+        z=None
+        if self.gan_type=="GAN_VAE":
+            z= self.out2(x.flatten(1))
         x = self.fc(x.flatten(1))
+        
         x = self.out(x)
 
         # Conditioning.
@@ -665,7 +675,9 @@ class DiscriminatorEpilogue(torch.nn.Module):
             x = (x * cmap).sum(dim=1, keepdim=True) * (1 / np.sqrt(self.cmap_dim))
 
         assert x.dtype == dtype
-        return x
+        
+        return x,z 
+       
 
 #----------------------------------------------------------------------------
 

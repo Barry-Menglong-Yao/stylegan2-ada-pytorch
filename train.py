@@ -21,7 +21,8 @@ from training import training_loop
 from metrics import metric_main
 from torch_utils import training_stats
 from torch_utils import custom_ops
-
+from dnnlib import config 
+ 
 #----------------------------------------------------------------------------
 
 class UserError(Exception):
@@ -218,6 +219,10 @@ def setup_training_loop_kwargs(
         desc += f'-batch{batch}'
         args.batch_size = batch
         args.batch_gpu = batch // gpus
+
+    if config.is_GAN_VAE()==True:
+        args.D_kwargs.epilogue_kwargs.gan_type="GAN_VAE"
+        args.loss_kwargs.gan_type="GAN_VAE"
 
     # ---------------------------------------------------
     # Discriminator augmentation: aug, p, target, augpipe
