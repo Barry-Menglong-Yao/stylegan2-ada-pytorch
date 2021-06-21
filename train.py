@@ -185,7 +185,12 @@ def setup_training_loop_kwargs(
 
     args.G_opt_kwargs = dnnlib.EasyDict(class_name='torch.optim.Adam', lr=spec.lrate, betas=[0,0.99], eps=1e-8)
     args.D_opt_kwargs = dnnlib.EasyDict(class_name='torch.optim.Adam', lr=spec.lrate, betas=[0,0.99], eps=1e-8)
-    args.loss_kwargs = dnnlib.EasyDict(class_name='training.loss.StyleGAN2Loss', r1_gamma=spec.gamma)
+    if config.is_GAN_VAE()==True:
+        args.D_kwargs.epilogue_kwargs.gan_type="GAN_VAE"
+        args.loss_kwargs = dnnlib.EasyDict(class_name='training.loss.GANVAELoss', r1_gamma=spec.gamma) 
+        args.loss_kwargs.gan_type="GAN_VAE"
+    else:
+        args.loss_kwargs = dnnlib.EasyDict(class_name='training.loss.StyleGAN2Loss', r1_gamma=spec.gamma)
 
     args.total_kimg = spec.kimg
     args.batch_size = spec.mb
@@ -220,9 +225,7 @@ def setup_training_loop_kwargs(
         args.batch_size = batch
         args.batch_gpu = batch // gpus
 
-    if config.is_GAN_VAE()==True:
-        args.D_kwargs.epilogue_kwargs.gan_type="GAN_VAE"
-        args.loss_kwargs.gan_type="GAN_VAE"
+    
 
     # ---------------------------------------------------
     # Discriminator augmentation: aug, p, target, augpipe
