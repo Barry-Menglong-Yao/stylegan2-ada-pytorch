@@ -668,6 +668,8 @@ class DiscriminatorEpilogue(torch.nn.Module):
             x = self.mbstd(x)
         x = self.conv(x)
         z=None
+        mu=None 
+        log_var=None
         if self.gan_type=="GAN_VAE":
             mu = self.fc_mu(x.flatten(1))
             log_var = self.fc_var(x.flatten(1))
@@ -684,7 +686,7 @@ class DiscriminatorEpilogue(torch.nn.Module):
 
         assert x.dtype == dtype
         
-        return x,z 
+        return x,z,mu,log_var
        
     def reparameterize(self, mu , logvar )  :
         """

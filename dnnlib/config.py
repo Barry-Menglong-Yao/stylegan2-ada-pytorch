@@ -1,5 +1,5 @@
  
-gan_type="N"
+gan_type="GAN_VAE"
 
 
 
