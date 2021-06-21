@@ -206,7 +206,7 @@ def training_loop(
             opt = dnnlib.util.construct_class_by_name(module.parameters(), **opt_kwargs) # subclass of torch.optim.Optimizer
             phases += [dnnlib.EasyDict(name=name+'main', module=module, opt=opt, interval=1)]
             phases += [dnnlib.EasyDict(name=name+'reg', module=module, opt=opt, interval=reg_interval)]
-    # for name, module, opt_kwargs, reg_interval in [  ('D', D, D_opt_kwargs, D_reg_interval)]:
+    
     for phase in phases:
         phase.start_event = None
         phase.end_event = None

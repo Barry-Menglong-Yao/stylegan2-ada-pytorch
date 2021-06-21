@@ -15,7 +15,8 @@ from torch_utils.ops import conv2d_resample
 from torch_utils.ops import upfirdn2d
 from torch_utils.ops import bias_act
 from torch_utils.ops import fma
-
+from torch import nn
+from torch.nn import functional as F
 #----------------------------------------------------------------------------
 
 @misc.profiled_function
@@ -642,8 +643,12 @@ class DiscriminatorEpilogue(torch.nn.Module):
         self.fc = FullyConnectedLayer(in_channels * (resolution ** 2), in_channels, activation=activation)
         
         if gan_type=="GAN_VAE":
-            self.out2 = FullyConnectedLayer(in_channels * (resolution ** 2), in_channels, activation=activation)
+            self.fc_mu = FullyConnectedLayer(in_channels * (resolution ** 2), in_channels, activation=activation)
+            self.fc_var = FullyConnectedLayer(in_channels * (resolution ** 2), in_channels, activation=activation)
+            # self.out2 = FullyConnectedLayer(in_channels * (resolution ** 2), in_channels, activation=activation)
         self.out = FullyConnectedLayer(in_channels, 1 if cmap_dim == 0 else cmap_dim)
+
+
 
     def forward(self, x, img, cmap, force_fp32=False):
         misc.assert_shape(x, [None, self.in_channels, self.resolution, self.resolution]) # [NCHW]
@@ -664,7 +669,10 @@ class DiscriminatorEpilogue(torch.nn.Module):
         x = self.conv(x)
         z=None
         if self.gan_type=="GAN_VAE":
-            z= self.out2(x.flatten(1))
+            mu = self.fc_mu(x.flatten(1))
+            log_var = self.fc_var(x.flatten(1))
+            z = self.reparameterize(mu, log_var)
+            # z= self.out2(x.flatten(1))
         x = self.fc(x.flatten(1))
         
         x = self.out(x)
@@ -678,6 +686,17 @@ class DiscriminatorEpilogue(torch.nn.Module):
         
         return x,z 
        
+    def reparameterize(self, mu , logvar )  :
+        """
+        Reparameterization trick to sample from N(mu, var) from
+        N(0,1).
+        :param mu: (Tensor) Mean of the latent Gaussian [B x D]
+        :param logvar: (Tensor) Standard deviation of the latent Gaussian [B x D]
+        :return: (Tensor) [B x D]
+        """
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return eps * std + mu
 
 #----------------------------------------------------------------------------
 

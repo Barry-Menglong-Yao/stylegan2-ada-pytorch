@@ -135,20 +135,18 @@ class StyleGAN2Loss(Loss):
             with torch.autograd.profiler.record_function(name + '_backward'):
                 (real_logits * 0 + loss_Dreal + loss_Dr1).mean().mul(gain).backward()
 
+   
+
 #----------------------------------------------------------------------------
 class GANVAELoss(StyleGAN2Loss):
     def accumulate_gradients(self, phase, real_img, real_c, gen_z, gen_c, sync, gain):
         super().accumulate_gradients(phase,real_img,real_c,gen_z,gen_c,sync,gain)
-        do_Emain = (phase in ['Emain' ])
-        # Gmain: Maximize logits for generated images.
-        if do_Emain:
+        do_Dmain = (phase in ['Dmain', 'Dboth'])
+        # Emain: VAE loss for real images.
+        if do_Dmain:
             with torch.autograd.profiler.record_function('Emain_forward'): #TODO what is effect of record_function?
                 gen_logits,gen_z_of_real_img = self.run_D(real_img, real_c, sync=False)
-                reconstructed_img, _gen_ws = self.run_G(gen_z_of_real_img, gen_c, sync=(sync)) # May get synced by Gpl.
-                # training_stats.report('Loss/scores/fake', gen_logits)
-                # training_stats.report('Loss/signs/fake', gen_logits.sign())
-                # loss_Gmain = torch.nn.functional.softplus(-gen_logits) # -log(sigmoid(gen_logits))
-                # training_stats.report('Loss/G/loss', loss_Gmain)
+                reconstructed_img, _gen_ws = self.run_G(gen_z_of_real_img, gen_c, sync=(sync)) 
                 loss = torch.nn.MSELoss()
                 loss_Emain_reconstruct = loss(reconstructed_img, real_img)
                 loss_Emain_latent=0
