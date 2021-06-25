@@ -233,7 +233,7 @@ def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel
     if batch_gen is None:
         batch_gen = min(batch_size, 4)
     assert batch_size % batch_gen == 0
-
+    #TODO
     # Setup generator and load labels.
     G = copy.deepcopy(opts.G).eval().requires_grad_(False).to(opts.device)
     dataset = dnnlib.util.construct_class_by_name(**opts.dataset_kwargs)

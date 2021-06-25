@@ -65,6 +65,7 @@ def setup_training_loop_kwargs(
     allow_tf32 = None, # Allow PyTorch to use TF32 for matmul and convolutions: <bool>, default = False
     nobench    = None, # Disable cuDNN benchmarking: <bool>, default = False
     workers    = None, # Override number of DataLoader workers: <int>, default = 3
+    vae_alpha = None,
 ):
     args = dnnlib.EasyDict()
 
@@ -189,6 +190,7 @@ def setup_training_loop_kwargs(
         args.D_kwargs.epilogue_kwargs.gan_type="GAN_VAE"
         args.loss_kwargs = dnnlib.EasyDict(class_name='training.loss.GANVAELoss', r1_gamma=spec.gamma) 
         args.loss_kwargs.gan_type="GAN_VAE"
+        args.loss_kwargs.vae_alpha=vae_alpha
     else:
         args.loss_kwargs = dnnlib.EasyDict(class_name='training.loss.StyleGAN2Loss', r1_gamma=spec.gamma)
 
@@ -442,6 +444,7 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--nobench', help='Disable cuDNN benchmarking', type=bool, metavar='BOOL')
 @click.option('--allow-tf32', help='Allow PyTorch to use TF32 internally', type=bool, metavar='BOOL')
 @click.option('--workers', help='Override number of DataLoader workers', type=int, metavar='INT')
+@click.option('--vae_alpha', help='alpha for vae loss', type=float)
 
 def main(ctx, outdir, dry_run, **config_kwargs):
     """Train a GAN using the techniques described in the paper
