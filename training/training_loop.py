@@ -110,7 +110,7 @@ def training_loop(
     ada_interval            = 4,        # How often to perform ADA adjustment?
     ada_kimg                = 500,      # ADA adjustment speed, measured in how many kimg it takes for p to increase/decrease by one unit.
     total_kimg              = 25000,    # Total length of the training, measured in thousands of real images.
-    kimg_per_tick           = 4,        # Progress snapshot interval.
+    kimg_per_tick           = 4,        # Progress snapshot interval.   
     image_snapshot_ticks    = 50,       # How often to save image snapshots? None = disable.
     network_snapshot_ticks  = 50,       # How often to save network snapshots? None = disable.
     resume_pkl              = None,     # Network pickle to resume training from.
@@ -119,6 +119,7 @@ def training_loop(
     abort_fn                = None,     # Callback function for determining whether to abort training. Must return consistent results across ranks.
     progress_fn             = None,     # Callback function for updating training progress. Called for all ranks.
 ):
+     
     # Initialize.
     start_time = time.time()
     device = torch.device('cuda', rank)
@@ -184,7 +185,7 @@ def training_loop(
     for name, module in [('G_mapping', G.mapping), ('G_synthesis', G.synthesis), ('D', D), (None, G_ema), ('augment_pipe', augment_pipe)]:
         if (num_gpus > 1) and (module is not None) and len(list(module.parameters())) != 0:
             module.requires_grad_(True)
-            module = torch.nn.parallel.DistributedDataParallel(module, device_ids=[device], broadcast_buffers=False,find_unused_parameters=True)
+            module = torch.nn.parallel.DistributedDataParallel(module, device_ids=[device], broadcast_buffers=False,find_unused_parameters=False)
             module.requires_grad_(False)
         if name is not None:
             ddp_modules[name] = module

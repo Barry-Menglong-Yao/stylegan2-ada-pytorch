@@ -22,7 +22,7 @@ class Loss:
 
 class StyleGAN2Loss(Loss):
     def __init__(self, device, G_mapping, G_synthesis, D, augment_pipe=None, style_mixing_prob=0.9, r1_gamma=10, pl_batch_shrink=2, pl_decay=0.01, pl_weight=2,gan_type=None,
-    vae_alpha=0):
+    vae_alpha=0,vae_beta=0):
         super().__init__()
         self.device = device
         self.G_mapping = G_mapping
@@ -37,6 +37,7 @@ class StyleGAN2Loss(Loss):
         self.pl_mean = torch.zeros([], device=device)
         self.gan_type=gan_type
         self.vae_alpha=vae_alpha
+        self.vae_beta=vae_beta
 
     def run_G(self, z, c, sync):
         with misc.ddp_sync(self.G_mapping, sync):
@@ -51,6 +52,13 @@ class StyleGAN2Loss(Loss):
         return img, ws
 
     def run_D(self, img, c, sync):
+        if self.augment_pipe is not None:
+            img = self.augment_pipe(img)
+        with misc.ddp_sync(self.D, sync):
+            logits  = self.D(img, c)
+        return logits 
+
+    def run_Encoder(self, img, c, sync):
         if self.augment_pipe is not None:
             img = self.augment_pipe(img)
         with misc.ddp_sync(self.D, sync):
@@ -104,7 +112,7 @@ class StyleGAN2Loss(Loss):
                 training_stats.report('Loss/signs/fake', gen_logits.sign())
                 
                 if self.gan_type=="GAN_VAE":
-                    loss_Dgen = -torch.nn.functional.softplus(gen_logits) #  log(  sigmoid(gen_logits))  # or log( 1- sigmoid(gen_logits))
+                    loss_Dgen = -torch.nn.functional.softplus(-gen_logits) #  log(  sigmoid(gen_logits))  # or log( 1- sigmoid(gen_logits))
                 else:
                     loss_Dgen = torch.nn.functional.softplus(gen_logits) # -log(1 - sigmoid(gen_logits))
             with torch.autograd.profiler.record_function('Dgen_backward'):
@@ -137,7 +145,7 @@ class StyleGAN2Loss(Loss):
                     training_stats.report('Loss/D/reg', loss_Dr1)
 
             with torch.autograd.profiler.record_function(name + '_backward'):
-                (real_logits * 0 + loss_Dreal + loss_Dr1).mean().mul(gain).backward()  #TODO why add together
+                (real_logits * 0 + loss_Dreal + loss_Dr1).mean().mul(gain).backward() 
 
         return loss_Dgen + loss_Dreal
 
@@ -158,9 +166,26 @@ class GANVAELoss(StyleGAN2Loss):
                 training_stats.report('Loss/scores/fake', gen_logits)
                 training_stats.report('Loss/signs/fake', gen_logits.sign())
                 loss_Gmain = torch.nn.functional.softplus(-gen_logits) # -log(sigmoid(gen_logits))
-                training_stats.report('Loss/G/loss', loss_Gmain)
+                # training_stats.report('Loss/G/loss', loss_Gmain)
             with torch.autograd.profiler.record_function('Gmain_backward'):
                 loss_Gmain.mean().mul(gain).backward()
+
+        if do_Gmain:  
+            with torch.autograd.profiler.record_function('Emain_forward'): 
+                real_logits,gen_z_of_real_img ,mu,log_var = self.run_D(real_img, real_c, sync=(sync))
+                reconstructed_img, _ = self.run_G(gen_z_of_real_img, gen_c, sync=(sync)) 
+                training_stats.report('Loss/scores/real', real_logits)
+                training_stats.report('Loss/signs/real', real_logits.sign())
+                loss = torch.nn.MSELoss(reduction='none')
+                loss_Emain_reconstruct = loss(reconstructed_img, real_img)
+                loss_Emain_reconstruct=loss_Emain_reconstruct.view(loss_Emain_reconstruct.shape[0],-1)
+                loss_Emain_reconstruct=torch.mean(loss_Emain_reconstruct,dim=1)
+                loss_Emain_reconstruct=torch.unsqueeze(loss_Emain_reconstruct, 1)
+                loss_Emain_reconstruct=loss_Emain_reconstruct.mul(self.vae_alpha)
+        
+                training_stats.report('Loss/G/loss',loss_Gmain+loss_Emain_reconstruct) 
+            with torch.autograd.profiler.record_function('Emain_backward'):
+                loss_Emain_reconstruct.mean().mul(gain).backward()
 
         # Gpl: Apply path length regularization.
         if do_Gpl:
@@ -190,8 +215,8 @@ class GANVAELoss(StyleGAN2Loss):
                 training_stats.report('Loss/signs/fake', gen_logits.sign())
                 
                 if self.gan_type=="GAN_VAE":
-                    loss_Dgen = torch.nn.functional.softplus(gen_logits)
-                    # loss_Dgen = -torch.nn.functional.softplus(-gen_logits) #  log(  sigmoid(gen_logits))  # or log( 1- sigmoid(gen_logits))
+                    # loss_Dgen = torch.nn.functional.softplus(gen_logits)
+                    loss_Dgen = -torch.nn.functional.softplus(-gen_logits) #  log(  sigmoid(gen_logits))  # or log( 1- sigmoid(gen_logits))
                 else:
                     loss_Dgen = torch.nn.functional.softplus(gen_logits) # -log(1 - sigmoid(gen_logits))
             with torch.autograd.profiler.record_function('Dgen_backward'):
@@ -225,7 +250,7 @@ class GANVAELoss(StyleGAN2Loss):
                     training_stats.report('Loss/D/reg', loss_Dr1)
 
             with torch.autograd.profiler.record_function(name + '_backward'):
-                (real_logits * 0 + loss_Dreal + loss_Dr1).mean().mul(gain).backward()  #TODO why add together
+                (real_logits * 0 + loss_Dreal + loss_Dr1).mean().mul(gain).backward()  
         GAN_D_loss= loss_Dgen + loss_Dreal
 
 
@@ -242,10 +267,11 @@ class GANVAELoss(StyleGAN2Loss):
                 loss_Emain_reconstruct = loss(reconstructed_img, real_img)
                 loss_Emain_reconstruct=loss_Emain_reconstruct.view(loss_Emain_reconstruct.shape[0],-1)
                 loss_Emain_reconstruct=torch.mean(loss_Emain_reconstruct,dim=1)
+                loss_Emain_reconstruct=loss_Emain_reconstruct.mul(self.vae_alpha)
                 kld_loss = -0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1)
+                kld_loss=kld_loss.mul(self.vae_beta)
                 VAE_D_loss= kld_loss+loss_Emain_reconstruct 
                 VAE_D_loss=torch.unsqueeze(VAE_D_loss, 1)
-                VAE_D_loss=VAE_D_loss.mul(self.vae_alpha)
                 D_loss= GAN_D_loss+VAE_D_loss
                 training_stats.report('Loss/D/loss',D_loss) 
             with torch.autograd.profiler.record_function('Emain_backward'):

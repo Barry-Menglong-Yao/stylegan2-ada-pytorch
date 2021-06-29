@@ -66,6 +66,7 @@ def setup_training_loop_kwargs(
     nobench    = None, # Disable cuDNN benchmarking: <bool>, default = False
     workers    = None, # Override number of DataLoader workers: <int>, default = 3
     vae_alpha = None,
+    vae_beta=None,
 ):
     args = dnnlib.EasyDict()
 
@@ -191,6 +192,7 @@ def setup_training_loop_kwargs(
         args.loss_kwargs = dnnlib.EasyDict(class_name='training.loss.GANVAELoss', r1_gamma=spec.gamma) 
         args.loss_kwargs.gan_type="GAN_VAE"
         args.loss_kwargs.vae_alpha=vae_alpha
+        args.loss_kwargs.vae_beta=vae_beta
     else:
         args.loss_kwargs = dnnlib.EasyDict(class_name='training.loss.StyleGAN2Loss', r1_gamma=spec.gamma)
 
@@ -445,7 +447,7 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--allow-tf32', help='Allow PyTorch to use TF32 internally', type=bool, metavar='BOOL')
 @click.option('--workers', help='Override number of DataLoader workers', type=int, metavar='INT')
 @click.option('--vae_alpha', help='alpha for vae loss', type=float)
-
+@click.option('--vae_beta', help='beta for vae loss', type=float)
 def main(ctx, outdir, dry_run, **config_kwargs):
     """Train a GAN using the techniques described in the paper
     "Training Generative Adversarial Networks with Limited Data".
@@ -546,6 +548,7 @@ def main(ctx, outdir, dry_run, **config_kwargs):
 #----------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    
     main() # pylint: disable=no-value-for-parameter
 
 #----------------------------------------------------------------------------

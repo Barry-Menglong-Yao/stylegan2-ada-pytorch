@@ -1,6 +1,6 @@
  
-# gan_type="GAN_VAE"
-gan_type="No"
+gan_type="GAN_VAE"
+# gan_type="No"
 
 
 def is_GAN_VAE():
