@@ -23,6 +23,10 @@ from torch_utils.ops import grid_sample_gradfix
 
 import legacy
 from metrics import metric_main
+import logging
+import sys
+from datetime import datetime
+ 
 
 #----------------------------------------------------------------------------
 
@@ -119,7 +123,8 @@ def training_loop(
     abort_fn                = None,     # Callback function for determining whether to abort training. Must return consistent results across ranks.
     progress_fn             = None,     # Callback function for updating training progress. Called for all ranks.
 ):
-     
+    # import os 
+    # os.environ['TORCH_DISTRIBUTED_DEBUG']="DETAIL"
     # Initialize.
     start_time = time.time()
     device = torch.device('cuda', rank)
@@ -133,6 +138,7 @@ def training_loop(
 
     # Load training set.
     if rank == 0:
+        print( f"start at time:{  datetime.utcnow().strftime('%Y-%m-%d-%H:%M') }")
         print('Loading training set...')
     training_set = dnnlib.util.construct_class_by_name(**training_set_kwargs) # subclass of training.dataset.Dataset
     training_set_sampler = misc.InfiniteSampler(dataset=training_set, rank=rank, num_replicas=num_gpus, seed=random_seed)
@@ -165,7 +171,7 @@ def training_loop(
         z = torch.empty([batch_gpu, G.z_dim], device=device)
         c = torch.empty([batch_gpu, G.c_dim], device=device)
         img = misc.print_module_summary(G, [z, c])
-        misc.print_module_summary(D, [img, c])
+        misc.print_module_summary(D, [img, c,"discriminator"])
 
     # Setup augmentation.
     if rank == 0:
@@ -185,7 +191,7 @@ def training_loop(
     for name, module in [('G_mapping', G.mapping), ('G_synthesis', G.synthesis), ('D', D), (None, G_ema), ('augment_pipe', augment_pipe)]:
         if (num_gpus > 1) and (module is not None) and len(list(module.parameters())) != 0:
             module.requires_grad_(True)
-            module = torch.nn.parallel.DistributedDataParallel(module, device_ids=[device], broadcast_buffers=False,find_unused_parameters=False)
+            module = torch.nn.parallel.DistributedDataParallel(module, device_ids=[device], broadcast_buffers=False,find_unused_parameters=True)
             module.requires_grad_(False)
         if name is not None:
             ddp_modules[name] = module
@@ -374,7 +380,7 @@ def training_loop(
                 print('Evaluating metrics...')
             for metric in metrics:#TODO 
                 result_dict = metric_main.calc_metric(metric=metric, G=snapshot_data['G_ema'],
-                    dataset_kwargs=training_set_kwargs, num_gpus=num_gpus, rank=rank, device=device)
+                    dataset_kwargs=training_set_kwargs, num_gpus=num_gpus, rank=rank, device=device,D=snapshot_data['D'])
                 if rank == 0:
                     metric_main.report_metric(result_dict, run_dir=run_dir, snapshot_pkl=snapshot_pkl)
                 stats_metrics.update(result_dict.results)
