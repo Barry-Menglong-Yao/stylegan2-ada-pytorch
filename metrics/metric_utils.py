@@ -235,7 +235,7 @@ def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel
     if batch_gen is None:
         batch_gen = min(batch_size, 4)
     assert batch_size % batch_gen == 0
-    #TODO
+ 
     # Setup generator and load labels.
     G = copy.deepcopy(opts.G).eval().requires_grad_(False).to(opts.device)
     dataset = dnnlib.util.construct_class_by_name(**opts.dataset_kwargs)
@@ -296,7 +296,7 @@ def compute_feature_stats_for_reconstruct(opts, detector_url, detector_kwargs, r
         if images.shape[1] == 1:
             images = images.repeat([1, 3, 1, 1])
         reconstruct_images=reconstruct(images,opts,  batch_size,dataset  )
-        features = detector(reconstruct_images.to(opts.device), **detector_kwargs)
+        features = detector(reconstruct_images , **detector_kwargs)
         stats.append_torch(features, num_gpus=opts.num_gpus, rank=opts.rank)
         progress.update(stats.num_items)
     return stats
@@ -309,7 +309,7 @@ def reconstruct(images,opts,  batch_size,dataset=None  ):
     D=copy.deepcopy(opts.D).eval().requires_grad_(False).to(opts.device)
     real_c=generate_c(opts,dataset,batch_size)
     gen_c=generate_c(opts,dataset,batch_size)
-    generated_z ,_,_ =  D(images , real_c,"encoder", **opts.D_kwargs)
+    generated_z ,_,_ =  D(processed_iamges , real_c,"encoder" )
     reconstructed_img = G(z=generated_z, c=real_c, **opts.G_kwargs)
     reconstructed_img = (reconstructed_img * 127.5 + 128).clamp(0, 255).to(torch.uint8)
     return reconstructed_img

@@ -17,6 +17,7 @@ from torch_utils.ops import bias_act
 from torch_utils.ops import fma
 from torch import nn
 from torch.nn import functional as F
+import dnnlib.hook_util as hook_util
 #----------------------------------------------------------------------------
 
 @misc.profiled_function
@@ -96,11 +97,15 @@ class FullyConnectedLayer(torch.nn.Module):
         activation      = 'linear', # Activation function: 'relu', 'lrelu', etc.
         lr_multiplier   = 1,        # Learning rate multiplier.
         bias_init       = 0,        # Initial value for the additive bias.
+        precision=32,
     ):
         super().__init__()
         self.activation = activation
         self.weight = torch.nn.Parameter(torch.randn([out_features, in_features]) / lr_multiplier)
+        # if precision==32:
         self.bias = torch.nn.Parameter(torch.full([out_features], np.float32(bias_init))) if bias else None
+        # else:
+        #     self.bias = torch.nn.Parameter(torch.full([out_features], np.float64(bias_init))) if bias else None
         self.weight_gain = lr_multiplier / np.sqrt(in_features)
         self.bias_gain = lr_multiplier
 
@@ -550,6 +555,7 @@ class DiscriminatorBlock(torch.nn.Module):
 
         self.conv1 = Conv2dLayer(tmp_channels, out_channels, kernel_size=3, activation=activation, down=2,
             trainable=next(trainable_iter), resample_filter=resample_filter, conv_clamp=conv_clamp, channels_last=self.channels_last)
+        # self.conv1.register_backward_hook(hook_util.hook_fn)
 
         if architecture == 'resnet':
             self.skip = Conv2dLayer(tmp_channels, out_channels, kernel_size=1, bias=False, down=2,
@@ -643,8 +649,8 @@ class DiscriminatorEpilogue(torch.nn.Module):
         self.fc = FullyConnectedLayer(in_channels * (resolution ** 2), in_channels, activation=activation)
         
         if gan_type=="GAN_VAE":
-            self.fc_mu = FullyConnectedLayer(in_channels * (resolution ** 2), in_channels, activation=activation)
-            self.fc_var = FullyConnectedLayer(in_channels * (resolution ** 2), in_channels, activation=activation)
+            self.fc_mu = FullyConnectedLayer(in_channels * (resolution ** 2), in_channels, activation=activation,precision=64)
+            self.fc_var = FullyConnectedLayer(in_channels * (resolution ** 2), in_channels, activation=activation,precision=64)
             # self.out2 = FullyConnectedLayer(in_channels * (resolution ** 2), in_channels, activation=activation)
         self.out = FullyConnectedLayer(in_channels, 1 if cmap_dim == 0 else cmap_dim)
 

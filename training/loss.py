@@ -279,3 +279,4 @@ class GANVAELoss(StyleGAN2Loss):
                 training_stats.report('Loss/D/loss',D_loss) 
             with torch.autograd.profiler.record_function('Emain_backward'):
                 VAE_D_loss.mean().mul(gain).backward()
+        
