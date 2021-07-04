@@ -97,15 +97,13 @@ class FullyConnectedLayer(torch.nn.Module):
         activation      = 'linear', # Activation function: 'relu', 'lrelu', etc.
         lr_multiplier   = 1,        # Learning rate multiplier.
         bias_init       = 0,        # Initial value for the additive bias.
-        precision=32,
+         
     ):
         super().__init__()
         self.activation = activation
         self.weight = torch.nn.Parameter(torch.randn([out_features, in_features]) / lr_multiplier)
-        # if precision==32:
+ 
         self.bias = torch.nn.Parameter(torch.full([out_features], np.float32(bias_init))) if bias else None
-        # else:
-        #     self.bias = torch.nn.Parameter(torch.full([out_features], np.float64(bias_init))) if bias else None
         self.weight_gain = lr_multiplier / np.sqrt(in_features)
         self.bias_gain = lr_multiplier
 
@@ -649,9 +647,9 @@ class DiscriminatorEpilogue(torch.nn.Module):
         self.fc = FullyConnectedLayer(in_channels * (resolution ** 2), in_channels, activation=activation)
         
         if gan_type=="GAN_VAE":
-            self.fc_mu = FullyConnectedLayer(in_channels * (resolution ** 2), in_channels, activation=activation,precision=64)
-            self.fc_var = FullyConnectedLayer(in_channels * (resolution ** 2), in_channels, activation=activation,precision=64)
-            # self.out2 = FullyConnectedLayer(in_channels * (resolution ** 2), in_channels, activation=activation)
+            self.fc_mu = FullyConnectedLayer(in_channels * (resolution ** 2), in_channels  )
+            self.fc_var = FullyConnectedLayer(in_channels * (resolution ** 2), in_channels )
+             
         self.out = FullyConnectedLayer(in_channels, 1 if cmap_dim == 0 else cmap_dim)
 
 
@@ -765,6 +763,7 @@ class Discriminator(torch.nn.Module):
         if self.c_dim > 0:
             cmap = self.mapping(None, c)
         x,z,mu,log_var = self.b4(x, img, cmap)
+        # return x,z,mu,log_var
         if role=="discriminator":
             return x
         else:
