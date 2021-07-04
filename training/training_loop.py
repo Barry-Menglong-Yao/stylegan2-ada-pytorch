@@ -372,6 +372,7 @@ def export_sample_images(training_set,rank,run_dir,G,device,batch_gpu,G_ema):
     grid_size = None
     grid_z = None
     grid_c = None
+    real_images = None
     if rank == 0:
         print('Exporting sample images...')
         grid_size, real_images, labels = setup_snapshot_image_grid(training_set=training_set)

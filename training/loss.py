@@ -55,7 +55,7 @@ class StyleGAN2Loss(Loss):
         if self.augment_pipe is not None:
             img = self.augment_pipe(img)
         with misc.ddp_sync(self.D, sync):
-            logits   = self.D(img, c,"discriminator")
+            logits    = self.D(img, c,"discriminator")
         return logits  
 
     def run_Encoder(self, img, c, sync):
@@ -173,7 +173,7 @@ class GANVAELoss(StyleGAN2Loss):
             # Dmain: Minimize logits for generated images.
             loss_Dgen=self.minimize_gen_logits(gen_z,gen_c,sync,gain)
             # Dmain: Maximize logits for real images.
-            loss_Dreal =self.maximize_real_logits(real_img,do_Dr1,real_c,sync,gain,do_Dmain)
+            loss_Dreal =self.maximize_real_logits_min_vae_loss(real_img,do_Dr1,real_c,sync,gain,do_Dmain)
             #  VAE loss for real images.
             VAE_D_loss=self.min_vae_loss(real_img,real_c,sync,gain)
             GAN_D_loss= loss_Dgen + loss_Dreal
@@ -182,7 +182,7 @@ class GANVAELoss(StyleGAN2Loss):
 
         # Dr1: Apply R1 regularization.
         if do_Dr1:
-            self.maximize_real_logits(real_img,do_Dr1,real_c,sync,gain,do_Dmain)
+            self.maximize_real_logits_min_vae_loss(real_img,do_Dr1,real_c,sync,gain,do_Dmain)
 
 
      
@@ -247,7 +247,7 @@ class GANVAELoss(StyleGAN2Loss):
             loss_Dgen.mean().mul(gain).backward()
         return loss_Dgen
 
-    def maximize_real_logits(self,real_img,do_Dr1,real_c,sync,gain,do_Dmain):
+    def maximize_real_logits_min_vae_loss(self,real_img,do_Dr1,real_c,sync,gain,do_Dmain):
         name = 'Dreal_Dr1' if do_Dmain and do_Dr1 else 'Dreal' if do_Dmain else 'Dr1'
         loss_Dr1=0
         loss_Dreal=0
