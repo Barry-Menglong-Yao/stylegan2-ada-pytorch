@@ -11,7 +11,7 @@ import torch
 from torch_utils import training_stats
 from torch_utils import misc
 from torch_utils.ops import conv2d_gradfix
-
+from dnnlib import config as config
 #----------------------------------------------------------------------------
 
 class Loss:
@@ -22,7 +22,7 @@ class Loss:
 
 class StyleGAN2Loss(Loss):
     def __init__(self, device, G_mapping, G_synthesis, D, augment_pipe=None, style_mixing_prob=0.9, r1_gamma=10, pl_batch_shrink=2, pl_decay=0.01, pl_weight=2,gan_type=None,
-    vae_alpha=0,vae_beta=0):
+    vae_alpha_d=0,vae_beta=0,vae_alpha_g=0):
         super().__init__()
         self.device = device
         self.G_mapping = G_mapping
@@ -36,8 +36,9 @@ class StyleGAN2Loss(Loss):
         self.pl_weight = pl_weight
         self.pl_mean = torch.zeros([], device=device)
         self.gan_type=gan_type
-        self.vae_alpha=vae_alpha
+        self.vae_alpha_d=vae_alpha_d
         self.vae_beta=vae_beta
+        self.vae_alpha_g=vae_alpha_g
 
     def run_G(self, z, c, sync):
         with misc.ddp_sync(self.G_mapping, sync):
@@ -62,8 +63,8 @@ class StyleGAN2Loss(Loss):
         if self.augment_pipe is not None:
             img = self.augment_pipe(img)
         with misc.ddp_sync(self.D , sync):
-            generated_z ,mu,log_var = self.D(img, c,"encoder")
-        return generated_z ,mu,log_var
+            logits,generated_z ,mu,log_var = self.D(img, c,"encoder")
+        return logits,generated_z ,mu,log_var
 
     # def accumulate_gradients(self, phase, real_img, real_c, gen_z, gen_c, sync, gain):
     #     assert phase in ['Gmain', 'Greg', 'Gboth', 'Dmain', 'Dreg', 'Dboth']
@@ -173,16 +174,17 @@ class GANVAELoss(StyleGAN2Loss):
             # Dmain: Minimize logits for generated images.
             loss_Dgen=self.minimize_gen_logits(gen_z,gen_c,sync,gain)
             # Dmain: Maximize logits for real images.
-            loss_Dreal =self.maximize_real_logits_min_vae_loss(real_img,do_Dr1,real_c,sync,gain,do_Dmain)
+            loss_Dreal,VAE_D_loss =self.maximize_real_logits_min_vae_loss(real_img,do_Dr1,real_c,sync,gain,do_Dmain)
             #  VAE loss for real images.
-            VAE_D_loss=self.min_vae_loss(real_img,real_c,sync,gain)
+            # VAE_D_loss=self.min_vae_loss(real_img,real_c,sync,gain)
             GAN_D_loss= loss_Dgen + loss_Dreal
             D_loss= GAN_D_loss+VAE_D_loss
+            # torch.nn.utils.clip_grad_norm_(self.D.parameters(),  1.0)
             training_stats.report('Loss/D/loss',D_loss) 
 
         # Dr1: Apply R1 regularization.
         if do_Dr1:
-            self.maximize_real_logits_min_vae_loss(real_img,do_Dr1,real_c,sync,gain,do_Dmain)
+            self.maximize_real_logits_for_r1(real_img,do_Dr1,real_c,sync,gain,do_Dmain)
 
 
      
@@ -191,7 +193,7 @@ class GANVAELoss(StyleGAN2Loss):
         
     def min_reconstruct_loss(self,real_img,real_c,sync,gain):
         with torch.autograd.profiler.record_function('Emain_forward'): 
-            gen_z_of_real_img ,mu,log_var = self.run_Encoder(real_img, real_c, sync=(sync))
+            logits,gen_z_of_real_img ,mu,log_var = self.run_Encoder(real_img, real_c, sync=(sync))
             reconstructed_img, _ = self.run_G(gen_z_of_real_img, real_c, sync=(sync)) 
             # training_stats.report('Loss/scores/real', real_logits)
             # training_stats.report('Loss/signs/real', real_logits.sign())
@@ -200,7 +202,7 @@ class GANVAELoss(StyleGAN2Loss):
             loss_Emain_reconstruct=loss_Emain_reconstruct.view(loss_Emain_reconstruct.shape[0],-1)
             loss_Emain_reconstruct=torch.mean(loss_Emain_reconstruct,dim=1)
             loss_Emain_reconstruct=torch.unsqueeze(loss_Emain_reconstruct, 1)
-            loss_Emain_reconstruct=loss_Emain_reconstruct.mul(self.vae_alpha)
+            loss_Emain_reconstruct=loss_Emain_reconstruct.mul(self.vae_alpha_g)
         with torch.autograd.profiler.record_function('Emain_backward'):
             loss_Emain_reconstruct.mean().mul(gain).backward()
         return loss_Emain_reconstruct
@@ -240,15 +242,42 @@ class GANVAELoss(StyleGAN2Loss):
             gen_logits = self.run_D(gen_img, gen_c, sync=False) # Gets synced by loss_Dreal.
             training_stats.report('Loss/scores/fake', gen_logits)
             training_stats.report('Loss/signs/fake', gen_logits.sign())
-            loss_Dgen = torch.nn.functional.softplus(gen_logits)    # -log(1 - sigmoid(gen_logits))
-            # loss_Dgen = -torch.nn.functional.softplus(-gen_logits) #  log(  sigmoid(gen_logits))  # or log( 1- sigmoid(gen_logits))
+            if  config.gan_loss_type=="GAN":
+                loss_Dgen = torch.nn.functional.softplus(gen_logits)    # -log(1 - sigmoid(gen_logits))
+            else:
+                loss_Dgen = -torch.nn.functional.softplus(-gen_logits) #  log(  sigmoid(gen_logits))  # or log( 1- sigmoid(gen_logits))
             
         with torch.autograd.profiler.record_function('Dgen_backward'):
             loss_Dgen.mean().mul(gain).backward()
         return loss_Dgen
 
     def maximize_real_logits_min_vae_loss(self,real_img,do_Dr1,real_c,sync,gain,do_Dmain):
-        name = 'Dreal_Dr1' if do_Dmain and do_Dr1 else 'Dreal' if do_Dmain else 'Dr1'
+        name = 'Dreal'   
+        loss_Dreal=0
+        with torch.autograd.profiler.record_function(name + '_forward'):
+            # real_img_tmp = real_img.detach().requires_grad_(do_Dr1)
+            real_logits,gen_z_of_real_img ,mu,log_var = self.run_Encoder(real_img , real_c, sync=sync)
+            training_stats.report('Loss/scores/real', real_logits)
+            training_stats.report('Loss/signs/real', real_logits.sign())
+            loss_Dreal = torch.nn.functional.softplus(-real_logits) # -log(sigmoid(real_logits))
+            
+            reconstructed_img, _ = self.run_G(gen_z_of_real_img, real_c, sync=(sync)) 
+            loss = torch.nn.MSELoss(reduction='none')
+            loss_Emain_reconstruct = loss(reconstructed_img, real_img)
+            loss_Emain_reconstruct=loss_Emain_reconstruct.view(loss_Emain_reconstruct.shape[0],-1)
+            loss_Emain_reconstruct=torch.mean(loss_Emain_reconstruct,dim=1)
+            loss_Emain_reconstruct=loss_Emain_reconstruct.mul(self.vae_alpha_d)
+            kld_loss = -0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1)
+            kld_loss=kld_loss.mul(self.vae_beta)
+            VAE_D_loss= kld_loss+loss_Emain_reconstruct 
+            VAE_D_loss=torch.unsqueeze(VAE_D_loss, 1)
+        with torch.autograd.profiler.record_function(name + '_backward'):
+            (real_logits * 0 + loss_Dreal +VAE_D_loss).mean().mul(gain).backward()  
+        return loss_Dreal ,VAE_D_loss
+
+    #not support D_both now
+    def maximize_real_logits_for_r1(self,real_img,do_Dr1,real_c,sync,gain,do_Dmain):
+        name =  'Dr1'
         loss_Dr1=0
         loss_Dreal=0
         with torch.autograd.profiler.record_function(name + '_forward'):
@@ -256,8 +285,7 @@ class GANVAELoss(StyleGAN2Loss):
             real_logits = self.run_D(real_img_tmp, real_c, sync=sync)
             training_stats.report('Loss/scores/real', real_logits)
             training_stats.report('Loss/signs/real', real_logits.sign())
-            if do_Dmain:
-                loss_Dreal = torch.nn.functional.softplus(-real_logits) # -log(sigmoid(real_logits))
+             
             
             if do_Dr1:
                 with torch.autograd.profiler.record_function('r1_grads'), conv2d_gradfix.no_weight_gradients():
@@ -268,26 +296,26 @@ class GANVAELoss(StyleGAN2Loss):
                 training_stats.report('Loss/D/reg', loss_Dr1)
 
         with torch.autograd.profiler.record_function(name + '_backward'):
-            (real_logits * 0 + loss_Dreal + loss_Dr1).mean().mul(gain).backward()  
-        return loss_Dreal 
+            (real_logits * 0 +  loss_Dr1).mean().mul(gain).backward()  
+        
 
-    def min_vae_loss(self,real_img,real_c,sync,gain):
-        with torch.autograd.profiler.record_function('Emain_forward'): 
-            gen_z_of_real_img ,mu,log_var = self.run_Encoder(real_img, real_c, sync=(sync))
-            reconstructed_img, _ = self.run_G(gen_z_of_real_img, real_c, sync=(sync)) 
+    # def min_vae_loss(self,real_img,real_c,sync,gain):
+    #     with torch.autograd.profiler.record_function('Emain_forward'): 
+    #         gen_z_of_real_img ,mu,log_var = self.run_Encoder(real_img, real_c, sync=(sync))
+    #         reconstructed_img, _ = self.run_G(gen_z_of_real_img, real_c, sync=(sync)) 
          
-            loss = torch.nn.MSELoss(reduction='none')
-            loss_Emain_reconstruct = loss(reconstructed_img, real_img)
-            loss_Emain_reconstruct=loss_Emain_reconstruct.view(loss_Emain_reconstruct.shape[0],-1)
-            loss_Emain_reconstruct=torch.mean(loss_Emain_reconstruct,dim=1)
-            loss_Emain_reconstruct=loss_Emain_reconstruct.mul(self.vae_alpha)
-            kld_loss = -0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1)
-            kld_loss=kld_loss.mul(self.vae_beta)
-            VAE_D_loss= kld_loss+loss_Emain_reconstruct 
-            VAE_D_loss=torch.unsqueeze(VAE_D_loss, 1)
+    #         loss = torch.nn.MSELoss(reduction='none')
+    #         loss_Emain_reconstruct = loss(reconstructed_img, real_img)
+    #         loss_Emain_reconstruct=loss_Emain_reconstruct.view(loss_Emain_reconstruct.shape[0],-1)
+    #         loss_Emain_reconstruct=torch.mean(loss_Emain_reconstruct,dim=1)
+    #         loss_Emain_reconstruct=loss_Emain_reconstruct.mul(self.vae_alpha)
+    #         kld_loss = -0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1)
+    #         kld_loss=kld_loss.mul(self.vae_beta)
+    #         VAE_D_loss= kld_loss+loss_Emain_reconstruct 
+    #         VAE_D_loss=torch.unsqueeze(VAE_D_loss, 1)
       
-        with torch.autograd.profiler.record_function('Emain_backward'):
-            VAE_D_loss.mean().mul(gain).backward()
-        return VAE_D_loss
+    #     with torch.autograd.profiler.record_function('Emain_backward'):
+    #         VAE_D_loss.mean().mul(gain).backward()
+    #     return VAE_D_loss
 
 

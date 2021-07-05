@@ -160,3 +160,7 @@ def ppl_wend(opts):
 
 
 #----------------------------------------------------------------------------
+@register_metric
+def demo(opts):
+
+    return dict(demo_fid=1)

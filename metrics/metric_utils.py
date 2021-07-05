@@ -295,25 +295,34 @@ def compute_feature_stats_for_reconstruct(opts, detector_url, detector_kwargs, r
     for images, _labels in torch.utils.data.DataLoader(dataset=dataset, sampler=item_subset, batch_size=batch_size, **data_loader_kwargs):
         if images.shape[1] == 1:
             images = images.repeat([1, 3, 1, 1])
-        reconstruct_images=reconstruct(images,opts,  batch_size,dataset  )
-        features = detector(reconstruct_images , **detector_kwargs)
+        reconstructed_images=reconstruct_image(images,opts,  batch_size,dataset  )
+        features = detector(reconstructed_images , **detector_kwargs)
         stats.append_torch(features, num_gpus=opts.num_gpus, rank=opts.rank)
         progress.update(stats.num_items)
     return stats
 
 
 
-def reconstruct(images,opts,  batch_size,dataset=None  ):
-    processed_iamges=(images.to(opts.device).to(torch.float32) / 127.5 - 1)
+def reconstruct_image(images,opts,  batch_size,dataset=None  ):
     G = copy.deepcopy(opts.G).eval().requires_grad_(False).to(opts.device)
     D=copy.deepcopy(opts.D).eval().requires_grad_(False).to(opts.device)
     real_c=generate_c(opts,dataset,batch_size)
-    gen_c=generate_c(opts,dataset,batch_size)
-    generated_z ,_,_ =  D(processed_iamges , real_c,"encoder" )
-    reconstructed_img = G(z=generated_z, c=real_c, **opts.G_kwargs)
-    reconstructed_img = (reconstructed_img * 127.5 + 128).clamp(0, 255).to(torch.uint8)
+    reconstructed_img=reconstruct(images ,  G,D,real_c,opts.device,G_kwargs=opts.G_kwargs  )
+
     return reconstructed_img
 
+
+
+def reconstruct(images ,   G,D,real_c,device=None, G_kwargs=None   ):
+    if G_kwargs==None:
+        G_kwargs=   dnnlib.EasyDict()
+    if device!=None:
+        images=images.to( device)
+    processed_iamges=(images.to(torch.float32) / 127.5 - 1)
+    _,generated_z ,_,_ =  D(processed_iamges , real_c,"encoder" )
+    reconstructed_img = G(z=generated_z, c=real_c, **G_kwargs)
+    reconstructed_img = (reconstructed_img * 127.5 + 128).clamp(0, 255).to(torch.uint8)
+    return reconstructed_img
 
 def generate_c(opts,dataset,batch_size):
     c = [dataset.get_label(np.random.randint(len(dataset))) for _i in range(batch_size)]

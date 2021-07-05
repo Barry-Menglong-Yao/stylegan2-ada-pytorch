@@ -767,7 +767,7 @@ class Discriminator(torch.nn.Module):
         if role=="discriminator":
             return x
         else:
-            return z,mu,log_var
+            return x,z,mu,log_var
      
 
 

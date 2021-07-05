@@ -253,10 +253,11 @@ def save_image(rank,image_snapshot_ticks,done,cur_tick,G_ema,grid_z,grid_c,run_d
 def reconstruct_grid(grid_real_images,G_ema,D,grid_c):
     grid_reconstructed_images=[]
     for real_images, c in zip(grid_real_images, grid_c):
-        processed_iamges=(real_images.to(torch.float32) / 127.5 - 1)
-        generated_z ,_,_ =  D(processed_iamges , c,"encoder" )
-        reconstructed_img = G_ema(z=generated_z, c=c , noise_mode='const')
-        reconstructed_img = (reconstructed_img * 127.5 + 128).clamp(0, 255) 
+        
+        G_kwargs = dnnlib.EasyDict()
+        G_kwargs.noise_mode='const'
+        reconstructed_img=reconstruct(real_images ,  G_ema,D,grid_c , G_kwargs=G_kwargs )
+         
         grid_reconstructed_images.append(reconstructed_img.cpu())
     grid_reconstructed_images=torch.cat(grid_reconstructed_images).numpy()
     return grid_reconstructed_images
@@ -429,7 +430,7 @@ def execute_training_phases(phase_real_img,phase_real_c,all_gen_z,all_gen_c,devi
             gain = phase.interval
             # with torch.autograd.detect_anomaly():
             loss.accumulate_gradients(phase=phase.name, real_img=real_img, real_c=real_c, gen_z=gen_z, gen_c=gen_c, sync=sync, gain=gain)
-            torch.nn.utils.clip_grad_value_(phase.module.parameters(), clip_value=1.0)
+            
         # Update weights.
         phase.module.requires_grad_(False)
         with torch.autograd.profiler.record_function(phase.name + '_opt'):
