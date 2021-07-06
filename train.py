@@ -68,6 +68,8 @@ def setup_training_loop_kwargs(
     vae_alpha_d= None,
     vae_beta=None,
     vae_alpha_g=None,
+    sample_num=0,
+    mode=None,
 ):
     args = dnnlib.EasyDict()
 
@@ -145,7 +147,7 @@ def setup_training_loop_kwargs(
     if mirror:
         desc += '-mirror'
         args.training_set_kwargs.xflip = True
-
+    args.sample_num=sample_num
     # ------------------------------------
     # Base config: cfg, gamma, kimg, batch
     # ------------------------------------
@@ -448,9 +450,13 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--nobench', help='Disable cuDNN benchmarking', type=bool, metavar='BOOL')
 @click.option('--allow-tf32', help='Allow PyTorch to use TF32 internally', type=bool, metavar='BOOL')
 @click.option('--workers', help='Override number of DataLoader workers', type=int, metavar='INT')
+
+#vae
 @click.option('--vae_alpha_g', help='alpha for vae loss', type=float)
 @click.option('--vae_alpha_d', help='alpha for vae loss', type=float)
 @click.option('--vae_beta', help='beta for vae loss', type=float)
+@click.option('--mode', help=' ', type=click.Choice(['test', 'train' ]))
+@click.option('--sample_num', help=' ', type=int, metavar='INT')
 def main(ctx, outdir, dry_run, **config_kwargs):
     """Train a GAN using the techniques described in the paper
     "Training Generative Adversarial Networks with Limited Data".
@@ -541,7 +547,7 @@ def main(ctx, outdir, dry_run, **config_kwargs):
 
     # Launch processes.
     print('Launching processes...')
-     
+    
     torch.multiprocessing.set_start_method('spawn')
     with tempfile.TemporaryDirectory() as temp_dir:
         if args.num_gpus == 1:

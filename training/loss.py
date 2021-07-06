@@ -161,18 +161,22 @@ class GANVAELoss(StyleGAN2Loss):
 
         # Gmain: Maximize logits for generated images.
         if do_Gmain:
-            loss_GAN_G=self.maximize_gen_logits(gen_z,gen_c,sync,do_Gpl ,gain)
+            loss_GAN_G=0
+            if    config.gan_gamma>0:
+                loss_GAN_G=self.maximize_gen_logits(gen_z,gen_c,sync,do_Gpl ,gain)
             loss_Emain_reconstruct=self.min_reconstruct_loss(real_img,real_c,sync,gain )
             training_stats.report('Loss/G/loss',loss_GAN_G+loss_Emain_reconstruct) 
 
         # Gpl: Apply path length regularization.
-        if do_Gpl:
+        if do_Gpl and config.gan_gamma>0:
             self.apply_gpl_regularization(gen_z, gen_c,sync,gain )
 
         
         if do_Dmain:
             # Dmain: Minimize logits for generated images.
-            loss_Dgen=self.minimize_gen_logits(gen_z,gen_c,sync,gain)
+            loss_Dgen=0
+            if    config.gan_gamma>0:
+                loss_Dgen=self.minimize_gen_logits(gen_z,gen_c,sync,gain)
             # Dmain: Maximize logits for real images.
             loss_Dreal,VAE_D_loss =self.maximize_real_logits_min_vae_loss(real_img,do_Dr1,real_c,sync,gain,do_Dmain)
             #  VAE loss for real images.
@@ -183,7 +187,7 @@ class GANVAELoss(StyleGAN2Loss):
             training_stats.report('Loss/D/loss',D_loss) 
 
         # Dr1: Apply R1 regularization.
-        if do_Dr1:
+        if do_Dr1  and config.gan_gamma>0:
             self.maximize_real_logits_for_r1(real_img,do_Dr1,real_c,sync,gain,do_Dmain)
 
 
@@ -214,6 +218,7 @@ class GANVAELoss(StyleGAN2Loss):
             training_stats.report('Loss/scores/fake', gen_logits)
             training_stats.report('Loss/signs/fake', gen_logits.sign())
             loss_Gmain = torch.nn.functional.softplus(-gen_logits) # -log(sigmoid(gen_logits))
+            loss_Gmain=loss_Gmain.mul(config.gan_gamma)
             # training_stats.report('Loss/G/loss', loss_Gmain)
         with torch.autograd.profiler.record_function('Gmain_backward'):
             loss_Gmain.mean().mul(gain).backward()
@@ -246,7 +251,7 @@ class GANVAELoss(StyleGAN2Loss):
                 loss_Dgen = torch.nn.functional.softplus(gen_logits)    # -log(1 - sigmoid(gen_logits))
             else:
                 loss_Dgen = -torch.nn.functional.softplus(-gen_logits) #  log(  sigmoid(gen_logits))  # or log( 1- sigmoid(gen_logits))
-            
+             
         with torch.autograd.profiler.record_function('Dgen_backward'):
             loss_Dgen.mean().mul(gain).backward()
         return loss_Dgen
@@ -260,6 +265,7 @@ class GANVAELoss(StyleGAN2Loss):
             training_stats.report('Loss/scores/real', real_logits)
             training_stats.report('Loss/signs/real', real_logits.sign())
             loss_Dreal = torch.nn.functional.softplus(-real_logits) # -log(sigmoid(real_logits))
+            loss_Dreal=loss_Dreal.mul(   config.gan_gamma)
             
             reconstructed_img, _ = self.run_G(gen_z_of_real_img, real_c, sync=(sync)) 
             loss = torch.nn.MSELoss(reduction='none')

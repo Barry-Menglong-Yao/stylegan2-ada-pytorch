@@ -32,10 +32,15 @@ from datetime import datetime
 
 #----------------------------------------------------------------------------
 
-def setup_snapshot_image_grid(training_set, random_seed=0):
+def setup_snapshot_image_grid(training_set,sample_num, random_seed=0):
     rnd = np.random.RandomState(random_seed)
-    gw = np.clip(7680 // training_set.image_shape[2], 7, 32)
-    gh = np.clip(4320 // training_set.image_shape[1], 4, 32)
+    if sample_num is not None and sample_num>0:
+        gh=4
+        gw=sample_num//gh
+        
+    else:
+        gw = np.clip(7680 // training_set.image_shape[2], 7, 32)
+        gh = np.clip(4320 // training_set.image_shape[1], 4, 32)
 
     # No labels => show random subset of training samples.
     if not training_set.has_labels:
@@ -124,6 +129,7 @@ def training_loop(
     allow_tf32              = False,    # Enable torch.backends.cuda.matmul.allow_tf32 and torch.backends.cudnn.allow_tf32?
     abort_fn                = None,     # Callback function for determining whether to abort training. Must return consistent results across ranks.
     progress_fn             = None,     # Callback function for updating training progress. Called for all ranks.
+    sample_num =0,
 ):
      
     # Initialize.
@@ -142,7 +148,7 @@ def training_loop(
     print_model(rank,batch_gpu,G,D,device)
 
     # Setup augmentation.
-    ada_stats,augment_pipe=setup_augmentation(rank,augment_p,ada_target,augment_kwargs,  device)
+    ada_stats,augment_pipe=setup_augmentation(rank,augment_p,ada_target,augment_kwargs,  device )
      
     # Distribute across GPUs.
     ddp_modules=setup_DDP(rank,G,D,G_ema,device,augment_pipe,num_gpus)
@@ -151,7 +157,7 @@ def training_loop(
     phases,loss=setup_training_phases(device,ddp_modules,loss_kwargs,G,D,G_opt_kwargs,G_reg_interval,D_opt_kwargs,D_reg_interval,rank)
      
     # Export sample images.
-    grid_z,grid_c,grid_size,real_images=export_sample_images(training_set,rank,run_dir,G,device,batch_gpu,G_ema)
+    grid_z,grid_c,grid_size,real_images=export_sample_images(training_set,rank,run_dir,G,device,batch_gpu,G_ema,sample_num)
 
     # Initialize logs.
     stats_collector,stats_metrics,stats_jsonl,stats_tfevents=initialize_log(rank,run_dir)
@@ -369,14 +375,14 @@ def setup_training_phases(device,ddp_modules,loss_kwargs,G,D,G_opt_kwargs,G_reg_
     return phases,loss
 
 
-def export_sample_images(training_set,rank,run_dir,G,device,batch_gpu,G_ema):
+def export_sample_images(training_set,rank,run_dir,G,device,batch_gpu,G_ema,sample_num):
     grid_size = None
     grid_z = None
     grid_c = None
     real_images = None
     if rank == 0:
         print('Exporting sample images...')
-        grid_size, real_images, labels = setup_snapshot_image_grid(training_set=training_set)
+        grid_size, real_images, labels = setup_snapshot_image_grid(training_set=training_set,sample_num=sample_num)
         save_image_grid(real_images, os.path.join(run_dir, 'reals.png'), drange=[0,255], grid_size=grid_size)
         grid_z = torch.randn([labels.shape[0], G.z_dim], device=device).split(batch_gpu)
         grid_c = torch.from_numpy(labels).to(device).split(batch_gpu)
