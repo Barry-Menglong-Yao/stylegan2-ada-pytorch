@@ -22,7 +22,7 @@ class Loss:
 
 class StyleGAN2Loss(Loss):
     def __init__(self, device, G_mapping, G_synthesis, D, augment_pipe=None, style_mixing_prob=0.9, r1_gamma=10, pl_batch_shrink=2, pl_decay=0.01, pl_weight=2,gan_type=None,
-    vae_alpha_d=0,vae_beta=0,vae_alpha_g=0):
+    vae_alpha_d=0,vae_beta=0,vae_alpha_g=0,vae_gan=None):
         super().__init__()
         self.device = device
         self.G_mapping = G_mapping
@@ -39,6 +39,7 @@ class StyleGAN2Loss(Loss):
         self.vae_alpha_d=vae_alpha_d
         self.vae_beta=vae_beta
         self.vae_alpha_g=vae_alpha_g
+        self.vae_gan=vae_gan
 
     def run_G(self, z, c, sync):
         with misc.ddp_sync(self.G_mapping, sync):
@@ -66,6 +67,11 @@ class StyleGAN2Loss(Loss):
             logits,generated_z ,mu,log_var = self.D(img, c,"encoder")
         return logits,generated_z ,mu,log_var
 
+    def run_VAE(self, img, c, sync):
+         
+        with misc.ddp_sync(self.vae_gan, sync):
+            real_logits,reconstructed_img,mu,log_var    = self.vae_gan(img, c,  sync ,self.style_mixing_prob)
+        return  real_logits,reconstructed_img,mu,log_var  
     # def accumulate_gradients(self, phase, real_img, real_c, gen_z, gen_c, sync, gain):
     #     assert phase in ['Gmain', 'Greg', 'Gboth', 'Dmain', 'Dreg', 'Dboth']
     #     do_Gmain = (phase in ['Gmain', 'Gboth'])
@@ -153,9 +159,10 @@ class StyleGAN2Loss(Loss):
 #----------------------------------------------------------------------------
 class GANVAELoss(StyleGAN2Loss):
     def accumulate_gradients(self, phase, real_img, real_c, gen_z, gen_c, sync, gain):
-        assert phase in ['Gmain', 'Greg', 'Gboth', 'Dmain', 'Dreg', 'Dboth']
+        assert phase in ['Gmain', 'Greg', 'Gboth', 'Dmain', 'Dreg', 'Dboth','VAEmain']
         do_Gmain = (phase in ['Gmain', 'Gboth'])
         do_Dmain = (phase in ['Dmain', 'Dboth'])
+        do_VAEmain = (phase in ['VAEmain' ])
         do_Gpl   = (phase in ['Greg', 'Gboth']) and (self.pl_weight != 0)
         do_Dr1   = (phase in ['Dreg', 'Dboth']) and (self.r1_gamma != 0)
 
@@ -190,14 +197,15 @@ class GANVAELoss(StyleGAN2Loss):
         if do_Dr1  and config.gan_gamma>0:
             self.maximize_real_logits_for_r1(real_img,do_Dr1,real_c,sync,gain,do_Dmain)
 
-
+        if do_VAEmain:
+            self.min_vae_loss(real_img, real_c,sync,gain )
      
             
              
         
     def min_reconstruct_loss(self,real_img,real_c,sync,gain):
         with torch.autograd.profiler.record_function('Emain_forward'): 
-            logits,gen_z_of_real_img ,mu,log_var = self.run_Encoder(real_img, real_c, sync=(sync))
+            logits,gen_z_of_real_img ,mu,log_var = self.run_Encoder(real_img, real_c, sync=False)
             reconstructed_img, _ = self.run_G(gen_z_of_real_img, real_c, sync=(sync)) 
             # training_stats.report('Loss/scores/real', real_logits)
             # training_stats.report('Loss/signs/real', real_logits.sign())
@@ -213,7 +221,7 @@ class GANVAELoss(StyleGAN2Loss):
 
     def maximize_gen_logits(self,gen_z,gen_c,sync,do_Gpl ,gain):
         with torch.autograd.profiler.record_function('Gmain_forward'):
-            gen_img, _gen_ws = self.run_G(gen_z, gen_c, sync=(sync and not do_Gpl)) # May get synced by Gpl.
+            gen_img, _gen_ws = self.run_G(gen_z, gen_c, sync= False) # May get synced by reconstruct.
             gen_logits = self.run_D(gen_img, gen_c, sync=False)
             training_stats.report('Loss/scores/fake', gen_logits)
             training_stats.report('Loss/signs/fake', gen_logits.sign())
@@ -261,13 +269,13 @@ class GANVAELoss(StyleGAN2Loss):
         loss_Dreal=0
         with torch.autograd.profiler.record_function(name + '_forward'):
             # real_img_tmp = real_img.detach().requires_grad_(do_Dr1)
-            real_logits,gen_z_of_real_img ,mu,log_var = self.run_Encoder(real_img , real_c, sync=sync)
+            real_logits,gen_z_of_real_img ,mu,log_var = self.run_Encoder(real_img , real_c, sync=(sync))
             training_stats.report('Loss/scores/real', real_logits)
             training_stats.report('Loss/signs/real', real_logits.sign())
             loss_Dreal = torch.nn.functional.softplus(-real_logits) # -log(sigmoid(real_logits))
             loss_Dreal=loss_Dreal.mul(   config.gan_gamma)
             
-            reconstructed_img, _ = self.run_G(gen_z_of_real_img, real_c, sync=(sync)) 
+            reconstructed_img, _ = self.run_G(gen_z_of_real_img, real_c, sync=False) 
             loss = torch.nn.MSELoss(reduction='none')
             loss_Emain_reconstruct = loss(reconstructed_img, real_img)
             loss_Emain_reconstruct=loss_Emain_reconstruct.view(loss_Emain_reconstruct.shape[0],-1)
@@ -280,6 +288,26 @@ class GANVAELoss(StyleGAN2Loss):
         with torch.autograd.profiler.record_function(name + '_backward'):
             (real_logits * 0 + loss_Dreal +VAE_D_loss).mean().mul(gain).backward()  
         return loss_Dreal ,VAE_D_loss
+
+    def min_vae_loss(self,real_img, real_c,sync,gain ):
+        name = 'VAE'   
+  
+        with torch.autograd.profiler.record_function(name + '_forward'):
+            # real_img_tmp = real_img.detach().requires_grad_(do_Dr1)
+            _ ,reconstructed_img,mu,log_var = self.run_VAE(real_img , real_c, sync=sync)
+        
+            loss = torch.nn.MSELoss(reduction='none')
+            loss_Emain_reconstruct = loss(reconstructed_img, real_img)
+            loss_Emain_reconstruct=loss_Emain_reconstruct.view(loss_Emain_reconstruct.shape[0],-1)
+            loss_Emain_reconstruct=torch.mean(loss_Emain_reconstruct,dim=1)
+            loss_Emain_reconstruct=loss_Emain_reconstruct.mul(self.vae_alpha_d)
+            kld_loss = -0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1)
+            kld_loss=kld_loss.mul(self.vae_beta)
+            VAE_D_loss= kld_loss+loss_Emain_reconstruct 
+            VAE_D_loss=torch.unsqueeze(VAE_D_loss, 1)
+        with torch.autograd.profiler.record_function(name + '_backward'):
+            VAE_D_loss.mean().mul(gain).backward()  
+        return VAE_D_loss
 
     #not support D_both now
     def maximize_real_logits_for_r1(self,real_img,do_Dr1,real_c,sync,gain,do_Dmain):

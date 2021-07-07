@@ -6,6 +6,7 @@
 # distribution of this software and related documentation without an express
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 
+from training.vae_gan_model import VaeGan
 from metrics.metric_utils import reconstruct
 import os
 import time
@@ -139,7 +140,7 @@ def training_loop(
     training_set_iterator,training_set=load_training_set(rank,training_set_kwargs,num_gpus,random_seed,batch_size,data_loader_kwargs)
 
     # Construct networks.
-    G,D,G_ema=construct_networks(rank,training_set,G_kwargs,D_kwargs,device)
+    G,D,G_ema,vae_gan=construct_networks(rank,training_set,G_kwargs,D_kwargs,device)
      
     # Resume from existing pickle.
     resume(G,D,G_ema,rank,resume_pkl)
@@ -151,11 +152,12 @@ def training_loop(
     ada_stats,augment_pipe=setup_augmentation(rank,augment_p,ada_target,augment_kwargs,  device )
      
     # Distribute across GPUs.
-    ddp_modules=setup_DDP(rank,G,D,G_ema,device,augment_pipe,num_gpus)
+    ddp_modules=setup_DDP(rank,G,D,G_ema,vae_gan,device,augment_pipe,num_gpus)
      
     # Setup training phases.
-    phases,loss=setup_training_phases(device,ddp_modules,loss_kwargs,G,D,G_opt_kwargs,G_reg_interval,D_opt_kwargs,D_reg_interval,rank)
-     
+    phases,loss=setup_training_phases(device,ddp_modules,loss_kwargs,G,D,vae_gan,G_opt_kwargs,G_reg_interval,D_opt_kwargs,D_reg_interval,rank)
+ 
+
     # Export sample images.
     grid_z,grid_c,grid_size,real_images=export_sample_images(training_set,rank,run_dir,G,device,batch_gpu,G_ema,sample_num)
 
@@ -303,7 +305,8 @@ def construct_networks(rank,training_set,G_kwargs,D_kwargs,device):
     G = dnnlib.util.construct_class_by_name(**G_kwargs, **common_kwargs).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
     D = dnnlib.util.construct_class_by_name(**D_kwargs, **common_kwargs).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
     G_ema = copy.deepcopy(G).eval()
-    return G,D,G_ema
+    vae_gan=VaeGan(D,G.mapping,G.synthesis).train().requires_grad_(False).to(device)
+    return G,D,G_ema,vae_gan
 
 
 def resume(G,D,G_ema,rank,resume_pkl):
@@ -335,11 +338,11 @@ def setup_augmentation(rank,augment_p,ada_target,augment_kwargs, device):
     return ada_stats,augment_pipe
 
 
-def setup_DDP(rank,G,D,G_ema,device,augment_pipe,num_gpus):
+def setup_DDP(rank,G,D,G_ema,vae_gan,device,augment_pipe,num_gpus):
     if rank == 0:
         print(f'Distributing across {num_gpus} GPUs...')
     ddp_modules = dict()
-    for name, module in [('G_mapping', G.mapping), ('G_synthesis', G.synthesis), ('D', D), (None, G_ema), ('augment_pipe', augment_pipe)]:
+    for name, module in [('G_mapping', G.mapping), ('G_synthesis', G.synthesis), ('D', D), (None, G_ema), ('augment_pipe', augment_pipe),('vae_gan',vae_gan)]:
         if (num_gpus > 1) and (module is not None) and len(list(module.parameters())) != 0:
             module.requires_grad_(True)
             module = torch.nn.parallel.DistributedDataParallel(module, device_ids=[device], broadcast_buffers=False,find_unused_parameters=True)
@@ -348,12 +351,13 @@ def setup_DDP(rank,G,D,G_ema,device,augment_pipe,num_gpus):
             ddp_modules[name] = module
     return ddp_modules
 
-def setup_training_phases(device,ddp_modules,loss_kwargs,G,D,G_opt_kwargs,G_reg_interval,D_opt_kwargs,D_reg_interval,rank):
+def setup_training_phases(device,ddp_modules,loss_kwargs,G,D,vae_gan,G_opt_kwargs,G_reg_interval,D_opt_kwargs,D_reg_interval,rank):
     if rank == 0:
         print('Setting up training phases...')
     loss = dnnlib.util.construct_class_by_name(device=device, **ddp_modules, **loss_kwargs) # subclass of training.loss.Loss
     phases = []
-    for name, module, opt_kwargs, reg_interval in [('G', G, G_opt_kwargs, G_reg_interval), ('D', D, D_opt_kwargs, D_reg_interval)]:
+    #TODO for name, module, opt_kwargs, reg_interval in [('G', G, G_opt_kwargs, G_reg_interval), ('D', D, D_opt_kwargs, D_reg_interval),('VAE',vae_gan,D_opt_kwargs,D_reg_interval)]:
+    for name, module, opt_kwargs, reg_interval in [ ('VAE',vae_gan,D_opt_kwargs,D_reg_interval)]:
         if reg_interval is None:
             opt = dnnlib.util.construct_class_by_name(params=module.parameters(), **opt_kwargs) # subclass of torch.optim.Optimizer
             phases += [dnnlib.EasyDict(name=name+'both', module=module, opt=opt, interval=1)]
@@ -364,7 +368,8 @@ def setup_training_phases(device,ddp_modules,loss_kwargs,G,D,G_opt_kwargs,G_reg_
             opt_kwargs.betas = [beta ** mb_ratio for beta in opt_kwargs.betas]
             opt = dnnlib.util.construct_class_by_name(module.parameters(), **opt_kwargs) # subclass of torch.optim.Optimizer
             phases += [dnnlib.EasyDict(name=name+'main', module=module, opt=opt, interval=1)]
-            phases += [dnnlib.EasyDict(name=name+'reg', module=module, opt=opt, interval=reg_interval)]
+            if name !="VAE":
+                phases += [dnnlib.EasyDict(name=name+'reg', module=module, opt=opt, interval=reg_interval)]
     
     for phase in phases:
         phase.start_event = None
