@@ -21,7 +21,7 @@ class Loss:
 #----------------------------------------------------------------------------
 
 class StyleGAN2Loss(Loss):
-    def __init__(self, device, G_mapping, G_synthesis, D, augment_pipe=None, style_mixing_prob=0.9, r1_gamma=10, pl_batch_shrink=2, pl_decay=0.01, pl_weight=2,gan_type=None,
+    def __init__(self, device, G_mapping=None, G_synthesis=None, D=None, augment_pipe=None, style_mixing_prob=0.9, r1_gamma=10, pl_batch_shrink=2, pl_decay=0.01, pl_weight=2,gan_type=None,
     vae_alpha_d=0,vae_beta=0,vae_alpha_g=0,vae_gan=None):
         super().__init__()
         self.device = device
@@ -70,8 +70,8 @@ class StyleGAN2Loss(Loss):
     def run_VAE(self, img, c, sync):
          
         with misc.ddp_sync(self.vae_gan, sync):
-            real_logits,reconstructed_img,mu,log_var    = self.vae_gan(img, c,  sync ,self.style_mixing_prob)
-        return  real_logits,reconstructed_img,mu,log_var  
+             reconstructed_img, mu,log_var    = self.vae_gan(img, c,  sync )
+        return   reconstructed_img,mu,log_var  
     # def accumulate_gradients(self, phase, real_img, real_c, gen_z, gen_c, sync, gain):
     #     assert phase in ['Gmain', 'Greg', 'Gboth', 'Dmain', 'Dreg', 'Dboth']
     #     do_Gmain = (phase in ['Gmain', 'Gboth'])
@@ -294,8 +294,10 @@ class GANVAELoss(StyleGAN2Loss):
   
         with torch.autograd.profiler.record_function(name + '_forward'):
             # real_img_tmp = real_img.detach().requires_grad_(do_Dr1)
-            _ ,reconstructed_img,mu,log_var = self.run_VAE(real_img , real_c, sync=sync)
-        
+            reconstructed_img,mu,log_var = self.run_VAE(real_img , real_c, sync=sync)
+            # loss_baseline=self.vae_gan.loss_function(real_img,reconstructed_img,mu,log_var)
+
+
             loss = torch.nn.MSELoss(reduction='none')
             loss_Emain_reconstruct = loss(reconstructed_img, real_img)
             loss_Emain_reconstruct=loss_Emain_reconstruct.view(loss_Emain_reconstruct.shape[0],-1)

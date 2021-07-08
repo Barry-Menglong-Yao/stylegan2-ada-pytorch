@@ -6,6 +6,7 @@
 # distribution of this software and related documentation without an express
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 
+from training.vanilla_vae import VanillaVAE
 from training.vae_gan_model import VaeGan
 from metrics.metric_utils import reconstruct
 import os
@@ -131,6 +132,7 @@ def training_loop(
     abort_fn                = None,     # Callback function for determining whether to abort training. Must return consistent results across ranks.
     progress_fn             = None,     # Callback function for updating training progress. Called for all ranks.
     sample_num =0,
+    VAE_kwargs={} 
 ):
      
     # Initialize.
@@ -140,13 +142,13 @@ def training_loop(
     training_set_iterator,training_set=load_training_set(rank,training_set_kwargs,num_gpus,random_seed,batch_size,data_loader_kwargs)
 
     # Construct networks.
-    G,D,G_ema,vae_gan=construct_networks(rank,training_set,G_kwargs,D_kwargs,device)
+    G,D,G_ema,vae_gan=construct_networks(rank,training_set,G_kwargs,D_kwargs,VAE_kwargs,device)
      
     # Resume from existing pickle.
     resume(G,D,G_ema,rank,resume_pkl)
  
     # Print network summary tables.
-    print_model(rank,batch_gpu,G,D,device)
+    print_model(rank,batch_gpu,G,D,vae_gan,device)
 
     # Setup augmentation.
     ada_stats,augment_pipe=setup_augmentation(rank,augment_p,ada_target,augment_kwargs,  device )
@@ -298,14 +300,22 @@ def load_training_set(rank,training_set_kwargs,num_gpus,random_seed,batch_size,d
     return training_set_iterator,training_set
 
 
-def construct_networks(rank,training_set,G_kwargs,D_kwargs,device):
+def construct_networks(rank,training_set,G_kwargs,D_kwargs,VAE_kwargs,device):
     if rank == 0:
         print('Constructing networks...')
     common_kwargs = dict(c_dim=training_set.label_dim, img_resolution=training_set.resolution, img_channels=training_set.num_channels)
-    G = dnnlib.util.construct_class_by_name(**G_kwargs, **common_kwargs).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
-    D = dnnlib.util.construct_class_by_name(**D_kwargs, **common_kwargs).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
+    # G = dnnlib.util.construct_class_by_name(**G_kwargs, **common_kwargs).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
+    # D = dnnlib.util.construct_class_by_name(**D_kwargs, **common_kwargs).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
+    # vae_gan = dnnlib.util.construct_class_by_name(**VAE_kwargs  ).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
+    vae_gan=VanillaVAE(3,512,training_set.label_dim).train().requires_grad_(False).to(device)
+    D=vae_gan.encoder
+    G=vae_gan.decoder
+    
     G_ema = copy.deepcopy(G).eval()
-    vae_gan=VaeGan(D,G.mapping,G.synthesis).train().requires_grad_(False).to(device)
+    
+    
+    # vae_gan=VaeGan(D,G.mapping,G.synthesis).train().requires_grad_(False).to(device)
+    # vae_gan=VanillaVAE(3,512).train().requires_grad_(False).to(device)
     return G,D,G_ema,vae_gan
 
 
@@ -318,12 +328,13 @@ def resume(G,D,G_ema,rank,resume_pkl):
             misc.copy_params_and_buffers(resume_data[name], module, require_all=False)
 
 
-def print_model(rank,batch_gpu,G,D,device):
+def print_model(rank,batch_gpu,G,D,vae_gan,device):
     if rank == 0:
         z = torch.empty([batch_gpu, G.z_dim], device=device)
         c = torch.empty([batch_gpu, G.c_dim], device=device)
         img = misc.print_module_summary(G, [z, c])
         misc.print_module_summary(D, [img, c,"discriminator"])
+        misc.print_module_summary(vae_gan, [img, c])
 
 def setup_augmentation(rank,augment_p,ada_target,augment_kwargs, device):
     if rank == 0:
@@ -342,7 +353,8 @@ def setup_DDP(rank,G,D,G_ema,vae_gan,device,augment_pipe,num_gpus):
     if rank == 0:
         print(f'Distributing across {num_gpus} GPUs...')
     ddp_modules = dict()
-    for name, module in [('G_mapping', G.mapping), ('G_synthesis', G.synthesis), ('D', D), (None, G_ema), ('augment_pipe', augment_pipe),('vae_gan',vae_gan)]:
+    #TODO for name, module in [('G_mapping', G.mapping), ('G_synthesis', G.synthesis), ('D', D), (None, G_ema), ('augment_pipe', augment_pipe),('vae_gan',vae_gan)]:
+    for name, module in [('vae_gan',vae_gan)]:
         if (num_gpus > 1) and (module is not None) and len(list(module.parameters())) != 0:
             module.requires_grad_(True)
             module = torch.nn.parallel.DistributedDataParallel(module, device_ids=[device], broadcast_buffers=False,find_unused_parameters=True)

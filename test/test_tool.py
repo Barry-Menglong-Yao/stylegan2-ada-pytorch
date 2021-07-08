@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn 
 def test_1():
     real_img = torch.randn(2, 2,2, requires_grad=True)
     reconstructed_img = torch.randn(2, 2,2)
@@ -91,5 +92,16 @@ def test_hook2():
 
     (1 - out.mean()).backward()
 
+def test_conv():
+    # With square kernels and equal stride
+    m = nn.Conv2d(3, 32,   kernel_size= 3, stride= 2, padding  = 1)
+    # # non-square kernels and unequal stride and with padding
+    # m = nn.Conv2d(16, 33, (3, 5), stride=(2, 1), padding=(4, 2))
+    # # non-square kernels and unequal stride and with padding and dilation
+    # m = nn.Conv2d(16, 33, (3, 5), stride=(2, 1), padding=(4, 2), dilation=(3, 1))
+    input = torch.randn(32, 3, 32, 32)
+    output = m(input)
+    print(output.shape)
+
 if __name__ == '__main__':
-    test_hook2()
+    test_conv()
