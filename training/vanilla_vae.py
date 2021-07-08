@@ -9,7 +9,7 @@ class Encoder(nn.Module):
                  in_channels: int,
                  latent_dim: int,
           
-                 hidden_dims  )  :
+                 hidden_dims ,is_vae )  :
         super(Encoder, self).__init__()
  
         
@@ -24,11 +24,14 @@ class Encoder(nn.Module):
                     nn.LeakyReLU())
             )
             in_channels = h_dim
-
+        self.is_vae=is_vae
         self.encoder = nn.Sequential(*modules)
-        self.fc_mu = nn.Linear(hidden_dims[-1]*4, latent_dim)  
-        self.fc_var = nn.Linear(hidden_dims[-1]*4 , latent_dim) 
-        self.fc_z=nn.Linear(hidden_dims[-1]*4 , latent_dim) 
+        
+        if is_vae:
+            self.fc_mu = nn.Linear(hidden_dims[-1]*4, latent_dim)  
+            self.fc_var = nn.Linear(hidden_dims[-1]*4 , latent_dim)  
+        else:
+            self.fc_z=nn.Linear(hidden_dims[-1]*4 , latent_dim) 
 
     def forward(self, input, c,role , **kwargs)  :
         """
@@ -42,10 +45,14 @@ class Encoder(nn.Module):
 
         # Split the result into mu and var components
         # of the latent Gaussian distribution
-        mu = self.fc_mu(result)
-        log_var = self.fc_var(result)
-        z = self.reparameterize(mu, log_var)
-        # self.fc_z
+        if self.is_vae:
+            mu = self.fc_mu(result)
+            log_var = self.fc_var(result)
+            z = self.reparameterize(mu, log_var)
+        else:
+            z=self.fc_z(result)
+            mu=None 
+            log_var=None
 
         return None,z,mu, log_var
 
@@ -134,7 +141,52 @@ class VanillaVAE(nn.Module):
         if hidden_dims is None:
             hidden_dims = [  64, 128, 256, 512]
 
-        self.encoder=Encoder(in_channels,latent_dim,hidden_dims)
+        self.encoder=Encoder(in_channels,latent_dim,hidden_dims,True)
+        self.decoder=Decoder( latent_dim,c_dim,hidden_dims)
+
+         
+
+    
+
+    
+    def forward(self, input, c,  sync=None   )  :
+        _,z,mu, log_var = self.encoder(input,c,None)
+        return  self.decoder(z,c),   mu, log_var
+
+    def loss_function(self,
+                      real_img,reconstructed_img,mu, log_var )  :
+        """
+        Computes the VAE loss function.
+        KL(N(\mu, \sigma), N(0, 1)) = \log \frac{1}{\sigma} + \frac{\sigma^2 + \mu^2}{2} - \frac{1}{2}
+        :param args:
+        :param kwargs:
+        :return:
+        """
+        recons = reconstructed_img
+        input = real_img
+ 
+
+        kld_weight = 32/50000  #TODO Account for the minibatch samples from the dataset
+        recons_loss =F.mse_loss(recons, input)
+        kld_loss = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1), dim = 0)
+
+        loss = recons_loss + kld_weight*kld_loss
+        return   loss 
+
+   
+class Autoencoder(nn.Module):
+
+
+    def __init__(self,
+                 in_channels: int,
+                 latent_dim: int,
+                 c_dim:int,
+                 hidden_dims=  None )  :
+        super(Autoencoder, self).__init__()
+        if hidden_dims is None:
+            hidden_dims = [  64, 128, 256, 512]
+
+        self.encoder=Encoder(in_channels,latent_dim,hidden_dims,False)
         self.decoder=Decoder( latent_dim,c_dim,hidden_dims)
 
          
@@ -161,9 +213,7 @@ class VanillaVAE(nn.Module):
 
         # kld_weight = kwargs['M_N'] # Account for the minibatch samples from the dataset
         recons_loss =F.mse_loss(recons, input)
-        kld_loss = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1), dim = 0)
+        # kld_loss = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1), dim = 0)
 
-        loss = recons_loss + kld_loss
+        loss = recons_loss  
         return   loss 
-
-   

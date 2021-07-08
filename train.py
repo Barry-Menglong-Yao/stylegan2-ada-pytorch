@@ -70,6 +70,7 @@ def setup_training_loop_kwargs(
     vae_alpha_g=None,
     sample_num=0,
     mode=None,
+    remark=None,
 ):
     args = dnnlib.EasyDict()
 
@@ -83,7 +84,7 @@ def setup_training_loop_kwargs(
     if not (gpus >= 1 and gpus & (gpus - 1) == 0):
         raise UserError('--gpus must be a power of two')
     args.num_gpus = gpus
-
+    # args.remark=remark
     if snap is None:
         snap = 50
     assert isinstance(snap, int)
@@ -373,7 +374,7 @@ def setup_training_loop_kwargs(
         if not workers >= 1:
             raise UserError('--workers must be at least 1')
         args.data_loader_kwargs.num_workers = workers
-
+    desc += f'-{remark}'
     return desc, args
 
 #----------------------------------------------------------------------------
@@ -459,6 +460,7 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--vae_beta', help='beta for vae loss', type=float)
 @click.option('--mode', help=' ', type=click.Choice(['test', 'train' ]))
 @click.option('--sample_num', help=' ', type=int, metavar='INT')
+@click.option('--remark', help=' ', type=str)
 def main(ctx, outdir, dry_run, **config_kwargs):
     """Train a GAN using the techniques described in the paper
     "Training Generative Adversarial Networks with Limited Data".
@@ -521,9 +523,10 @@ def main(ctx, outdir, dry_run, **config_kwargs):
     args.run_dir = os.path.join(outdir, f'{cur_run_id:05d}-{run_desc}')
     assert not os.path.exists(args.run_dir)
 
+    remark=config_kwargs['remark']
     # Print options.
     print()
-    print('Training options:')
+    print(f'Training options: remark: {remark}')
     print(json.dumps(args, indent=2))
     print()
     print(f'Output directory:   {args.run_dir}')

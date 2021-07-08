@@ -6,7 +6,7 @@
 # distribution of this software and related documentation without an express
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 
-from training.vanilla_vae import VanillaVAE
+from training.vanilla_vae import Autoencoder, VanillaVAE
 from training.vae_gan_model import VaeGan
 from metrics.metric_utils import reconstruct
 import os
@@ -308,6 +308,7 @@ def construct_networks(rank,training_set,G_kwargs,D_kwargs,VAE_kwargs,device):
     # D = dnnlib.util.construct_class_by_name(**D_kwargs, **common_kwargs).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
     # vae_gan = dnnlib.util.construct_class_by_name(**VAE_kwargs  ).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
     vae_gan=VanillaVAE(3,512,training_set.label_dim).train().requires_grad_(False).to(device)
+    # vae_gan=Autoencoder(3,512,training_set.label_dim).train().requires_grad_(False).to(device)
     D=vae_gan.encoder
     G=vae_gan.decoder
     
@@ -369,7 +370,7 @@ def setup_training_phases(device,ddp_modules,loss_kwargs,G,D,vae_gan,G_opt_kwarg
     loss = dnnlib.util.construct_class_by_name(device=device, **ddp_modules, **loss_kwargs) # subclass of training.loss.Loss
     phases = []
     #TODO for name, module, opt_kwargs, reg_interval in [('G', G, G_opt_kwargs, G_reg_interval), ('D', D, D_opt_kwargs, D_reg_interval),('VAE',vae_gan,D_opt_kwargs,D_reg_interval)]:
-    for name, module, opt_kwargs, reg_interval in [ ('VAE',vae_gan,D_opt_kwargs,D_reg_interval)]:
+    for name, module, opt_kwargs, reg_interval in [ ('VAE',vae_gan,D_opt_kwargs,None)]:
         if reg_interval is None:
             opt = dnnlib.util.construct_class_by_name(params=module.parameters(), **opt_kwargs) # subclass of torch.optim.Optimizer
             phases += [dnnlib.EasyDict(name=name+'both', module=module, opt=opt, interval=1)]

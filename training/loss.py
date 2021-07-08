@@ -159,10 +159,10 @@ class StyleGAN2Loss(Loss):
 #----------------------------------------------------------------------------
 class GANVAELoss(StyleGAN2Loss):
     def accumulate_gradients(self, phase, real_img, real_c, gen_z, gen_c, sync, gain):
-        assert phase in ['Gmain', 'Greg', 'Gboth', 'Dmain', 'Dreg', 'Dboth','VAEmain']
+        assert phase in ['Gmain', 'Greg', 'Gboth', 'Dmain', 'Dreg', 'Dboth','VAEmain','VAEboth']
         do_Gmain = (phase in ['Gmain', 'Gboth'])
         do_Dmain = (phase in ['Dmain', 'Dboth'])
-        do_VAEmain = (phase in ['VAEmain' ])
+        do_VAEmain = (phase in ['VAEmain' ,'VAEboth'])
         do_Gpl   = (phase in ['Greg', 'Gboth']) and (self.pl_weight != 0)
         do_Dr1   = (phase in ['Dreg', 'Dboth']) and (self.r1_gamma != 0)
 
@@ -295,7 +295,7 @@ class GANVAELoss(StyleGAN2Loss):
         with torch.autograd.profiler.record_function(name + '_forward'):
             # real_img_tmp = real_img.detach().requires_grad_(do_Dr1)
             reconstructed_img,mu,log_var = self.run_VAE(real_img , real_c, sync=sync)
-            # loss_baseline=self.vae_gan.loss_function(real_img,reconstructed_img,mu,log_var)
+            # VAE_D_loss=self.vae_gan.loss_function(real_img,reconstructed_img,mu,log_var)
 
 
             loss = torch.nn.MSELoss(reduction='none')
@@ -304,7 +304,7 @@ class GANVAELoss(StyleGAN2Loss):
             loss_Emain_reconstruct=torch.mean(loss_Emain_reconstruct,dim=1)
             loss_Emain_reconstruct=loss_Emain_reconstruct.mul(self.vae_alpha_d)
             kld_loss = -0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1)
-            kld_loss=kld_loss.mul(self.vae_beta)
+            kld_loss=kld_loss.mul(32/50000).mul(self.vae_beta)
             VAE_D_loss= kld_loss+loss_Emain_reconstruct 
             VAE_D_loss=torch.unsqueeze(VAE_D_loss, 1)
         with torch.autograd.profiler.record_function(name + '_backward'):
