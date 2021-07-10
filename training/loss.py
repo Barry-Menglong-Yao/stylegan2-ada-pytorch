@@ -11,7 +11,7 @@ import torch
 from torch_utils import training_stats
 from torch_utils import misc
 from torch_utils.ops import conv2d_gradfix
-from dnnlib import config as config
+from dnnlib.config import config  
 #----------------------------------------------------------------------------
 
 class Loss:
@@ -275,6 +275,7 @@ class GANVAELoss(StyleGAN2Loss):
             loss_Dreal = torch.nn.functional.softplus(-real_logits) # -log(sigmoid(real_logits))
             loss_Dreal=loss_Dreal.mul(   config.gan_gamma)
             
+            # VAE_D_loss=0
             reconstructed_img, _ = self.run_G(gen_z_of_real_img, real_c, sync=False) 
             loss = torch.nn.MSELoss(reduction='none')
             loss_Emain_reconstruct = loss(reconstructed_img, real_img)
@@ -282,7 +283,7 @@ class GANVAELoss(StyleGAN2Loss):
             loss_Emain_reconstruct=torch.mean(loss_Emain_reconstruct,dim=1)
             loss_Emain_reconstruct=loss_Emain_reconstruct.mul(self.vae_alpha_d)
             kld_loss = -0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1)
-            kld_loss=kld_loss.mul(self.vae_beta)
+            kld_loss=kld_loss.mul(32/50000).mul(self.vae_beta)
             VAE_D_loss= kld_loss+loss_Emain_reconstruct 
             VAE_D_loss=torch.unsqueeze(VAE_D_loss, 1)
         with torch.autograd.profiler.record_function(name + '_backward'):
@@ -302,10 +303,11 @@ class GANVAELoss(StyleGAN2Loss):
             loss_Emain_reconstruct = loss(reconstructed_img, real_img)
             loss_Emain_reconstruct=loss_Emain_reconstruct.view(loss_Emain_reconstruct.shape[0],-1)
             loss_Emain_reconstruct=torch.mean(loss_Emain_reconstruct,dim=1)
-            loss_Emain_reconstruct=loss_Emain_reconstruct.mul(self.vae_alpha_d)
-            kld_loss = -0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1)
-            kld_loss=kld_loss.mul(32/50000).mul(self.vae_beta)
-            VAE_D_loss= kld_loss+loss_Emain_reconstruct 
+            VAE_D_loss=loss_Emain_reconstruct.mul(self.vae_alpha_d)
+            if self.vae_beta>0:
+                kld_loss = -0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1)
+                kld_loss=kld_loss.mul(32/50000).mul(self.vae_beta)
+                VAE_D_loss += kld_loss 
             VAE_D_loss=torch.unsqueeze(VAE_D_loss, 1)
         with torch.autograd.profiler.record_function(name + '_backward'):
             VAE_D_loss.mean().mul(gain).backward()  

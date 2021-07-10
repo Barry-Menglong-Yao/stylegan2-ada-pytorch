@@ -11,9 +11,9 @@ class VaeGan(torch.nn.Module):
    
         self.G_synthesis=G_synthesis
         self.G_mapping=G_mapping
-        # self.loss_f=loss_f
+ 
     def forward(self, real_img, real_c,  sync  ):
-        with misc.ddp_sync(self.D , sync):#TODO set DDP for self.D
+        with misc.ddp_sync(self.D , sync): 
             real_logits,gen_z_of_real_img ,mu,log_var = self.D(real_img, real_c,"encoder")
         # with misc.ddp_sync(self.G_mapping, sync):
         #     ws = self.G_mapping(gen_z_of_real_img, real_c)

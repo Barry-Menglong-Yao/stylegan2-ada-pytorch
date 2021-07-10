@@ -30,6 +30,7 @@ from metrics import metric_main
 import logging
 import sys
 from datetime import datetime
+from dnnlib.config import config
  
 
 #----------------------------------------------------------------------------
@@ -132,7 +133,8 @@ def training_loop(
     abort_fn                = None,     # Callback function for determining whether to abort training. Must return consistent results across ranks.
     progress_fn             = None,     # Callback function for updating training progress. Called for all ranks.
     sample_num =0,
-    VAE_kwargs={} 
+    VAE_kwargs={} ,
+    remark=None
 ):
      
     # Initialize.
@@ -304,19 +306,22 @@ def construct_networks(rank,training_set,G_kwargs,D_kwargs,VAE_kwargs,device):
     if rank == 0:
         print('Constructing networks...')
     common_kwargs = dict(c_dim=training_set.label_dim, img_resolution=training_set.resolution, img_channels=training_set.num_channels)
-    # G = dnnlib.util.construct_class_by_name(**G_kwargs, **common_kwargs).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
-    # D = dnnlib.util.construct_class_by_name(**D_kwargs, **common_kwargs).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
-    # vae_gan = dnnlib.util.construct_class_by_name(**VAE_kwargs  ).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
-    vae_gan=VanillaVAE(3,512,training_set.label_dim).train().requires_grad_(False).to(device)
-    # vae_gan=Autoencoder(3,512,training_set.label_dim).train().requires_grad_(False).to(device)
-    D=vae_gan.encoder
-    G=vae_gan.decoder
+    
+    if config.model_type=="autoencoder_by_GAN" or config.model_type=="VAE_by_GAN":
+        G = dnnlib.util.construct_class_by_name(**G_kwargs, **common_kwargs).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
+        D = dnnlib.util.construct_class_by_name(**D_kwargs, **common_kwargs).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
+        vae_gan=VaeGan(D,G.mapping,G.synthesis).train().requires_grad_(False).to(device)
+    elif config.model_type=="autoencoder":
+        vae_gan=Autoencoder(3,512,training_set.label_dim).train().requires_grad_(False).to(device)
+        D=vae_gan.encoder
+        G=vae_gan.decoder
+    else:
+        vae_gan=VanillaVAE(3,512,training_set.label_dim).train().requires_grad_(False).to(device)
+        D=vae_gan.encoder
+        G=vae_gan.decoder
+     
     
     G_ema = copy.deepcopy(G).eval()
-    
-    
-    # vae_gan=VaeGan(D,G.mapping,G.synthesis).train().requires_grad_(False).to(device)
-    # vae_gan=VanillaVAE(3,512).train().requires_grad_(False).to(device)
     return G,D,G_ema,vae_gan
 
 
@@ -335,7 +340,7 @@ def print_model(rank,batch_gpu,G,D,vae_gan,device):
         c = torch.empty([batch_gpu, G.c_dim], device=device)
         img = misc.print_module_summary(G, [z, c])
         misc.print_module_summary(D, [img, c,"discriminator"])
-        misc.print_module_summary(vae_gan, [img, c])
+        misc.print_module_summary(vae_gan, [img, c,None])
 
 def setup_augmentation(rank,augment_p,ada_target,augment_kwargs, device):
     if rank == 0:
@@ -354,8 +359,11 @@ def setup_DDP(rank,G,D,G_ema,vae_gan,device,augment_pipe,num_gpus):
     if rank == 0:
         print(f'Distributing across {num_gpus} GPUs...')
     ddp_modules = dict()
-    #TODO for name, module in [('G_mapping', G.mapping), ('G_synthesis', G.synthesis), ('D', D), (None, G_ema), ('augment_pipe', augment_pipe),('vae_gan',vae_gan)]:
-    for name, module in [('vae_gan',vae_gan)]:
+    if config.model_type=="autoencoder_by_GAN":
+        module_list=[('vae_gan',vae_gan)]
+    else:
+        module_list=[('G_mapping', G.mapping), ('G_synthesis', G.synthesis), ('D', D), (None, G_ema), ('augment_pipe', augment_pipe),('vae_gan',vae_gan)]
+    for name, module in module_list:
         if (num_gpus > 1) and (module is not None) and len(list(module.parameters())) != 0:
             module.requires_grad_(True)
             module = torch.nn.parallel.DistributedDataParallel(module, device_ids=[device], broadcast_buffers=False,find_unused_parameters=True)
@@ -369,8 +377,12 @@ def setup_training_phases(device,ddp_modules,loss_kwargs,G,D,vae_gan,G_opt_kwarg
         print('Setting up training phases...')
     loss = dnnlib.util.construct_class_by_name(device=device, **ddp_modules, **loss_kwargs) # subclass of training.loss.Loss
     phases = []
-    #TODO for name, module, opt_kwargs, reg_interval in [('G', G, G_opt_kwargs, G_reg_interval), ('D', D, D_opt_kwargs, D_reg_interval),('VAE',vae_gan,D_opt_kwargs,D_reg_interval)]:
-    for name, module, opt_kwargs, reg_interval in [ ('VAE',vae_gan,D_opt_kwargs,None)]:
+    if config.model_type=="autoencoder_by_GAN":
+        module_list=[ ('VAE',vae_gan,D_opt_kwargs,None)]
+    else:
+        module_list=[('G', G, G_opt_kwargs, G_reg_interval), ('D', D, D_opt_kwargs, D_reg_interval),('VAE',vae_gan,D_opt_kwargs,D_reg_interval)]
+    
+    for name, module, opt_kwargs, reg_interval in module_list:
         if reg_interval is None:
             opt = dnnlib.util.construct_class_by_name(params=module.parameters(), **opt_kwargs) # subclass of torch.optim.Optimizer
             phases += [dnnlib.EasyDict(name=name+'both', module=module, opt=opt, interval=1)]

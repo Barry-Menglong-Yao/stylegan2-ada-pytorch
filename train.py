@@ -21,7 +21,7 @@ from training import training_loop
 from metrics import metric_main
 from torch_utils import training_stats
 from torch_utils import custom_ops
-from dnnlib import config 
+from dnnlib.config import * 
  
 #----------------------------------------------------------------------------
 
@@ -84,7 +84,7 @@ def setup_training_loop_kwargs(
     if not (gpus >= 1 and gpus & (gpus - 1) == 0):
         raise UserError('--gpus must be a power of two')
     args.num_gpus = gpus
-    # args.remark=remark
+    args.remark=remark
     if snap is None:
         snap = 50
     assert isinstance(snap, int)
@@ -193,10 +193,11 @@ def setup_training_loop_kwargs(
     args.D_opt_kwargs = dnnlib.EasyDict(class_name='torch.optim.Adam', lr=spec.lrate, betas=[0,0.99], eps=1e-8)
     args.VAE_kwargs=   dnnlib.EasyDict(class_name='training.vanilla_vae.VanillaVAE', in_channels=3, latent_dim=512 )
     
-    if config.is_GAN_VAE()==True:
-        args.D_kwargs.epilogue_kwargs.gan_type="GAN_VAE"
+    if  is_GAN_VAE()==True:
+        args.D_kwargs.epilogue_kwargs.model_type= config.model_type
+        args.G_kwargs.is_mapping=config.is_mapping
         args.loss_kwargs = dnnlib.EasyDict(class_name='training.loss.GANVAELoss', r1_gamma=spec.gamma) 
-        args.loss_kwargs.gan_type="GAN_VAE"
+ 
         args.loss_kwargs.vae_alpha_d=vae_alpha_d
         args.loss_kwargs.vae_alpha_g=vae_alpha_g
         args.loss_kwargs.vae_beta=vae_beta
@@ -374,7 +375,10 @@ def setup_training_loop_kwargs(
         if not workers >= 1:
             raise UserError('--workers must be at least 1')
         args.data_loader_kwargs.num_workers = workers
-    desc += f'-{remark}'
+
+    desc+=gen_run_desc_from_config()
+    if remark!=None:
+        desc += f'-{remark}'
     return desc, args
 
 #----------------------------------------------------------------------------
@@ -526,7 +530,8 @@ def main(ctx, outdir, dry_run, **config_kwargs):
     remark=config_kwargs['remark']
     # Print options.
     print()
-    print(f'Training options: remark: {remark}')
+    print(f'Training options:  ')
+     
     print(json.dumps(args, indent=2))
     print()
     print(f'Output directory:   {args.run_dir}')
@@ -549,6 +554,8 @@ def main(ctx, outdir, dry_run, **config_kwargs):
     os.makedirs(args.run_dir)
     with open(os.path.join(args.run_dir, 'training_options.json'), 'wt') as f:
         json.dump(args, f, indent=2)
+    with open(os.path.join(args.run_dir, 'config.json'), 'wt') as f:
+        json.dump(config, f, indent=2)
 
     # Launch processes.
     print('Launching processes...')

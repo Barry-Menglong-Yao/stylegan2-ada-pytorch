@@ -166,7 +166,7 @@ class VanillaVAE(nn.Module):
         input = real_img
  
 
-        kld_weight = 32/50000  #TODO Account for the minibatch samples from the dataset
+        kld_weight = 32/50000  #  Account for the minibatch samples from the dataset
         recons_loss =F.mse_loss(recons, input)
         kld_loss = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1), dim = 0)
 
