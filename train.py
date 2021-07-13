@@ -9,6 +9,7 @@
 """Train a GAN using the techniques described in the paper
 "Training Generative Adversarial Networks with Limited Data"."""
 
+from metrics.metric_utils import reconstruct
 import os
 import click
 import re
@@ -22,7 +23,11 @@ from metrics import metric_main
 from torch_utils import training_stats
 from torch_utils import custom_ops
 from dnnlib.config import * 
- 
+from ray import tune
+from ray.tune import CLIReporter
+from ray.tune.schedulers import ASHAScheduler
+from functools import partial
+import numpy as np
 #----------------------------------------------------------------------------
 
 class UserError(Exception):
@@ -462,7 +467,7 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--vae_alpha_g', help='alpha for vae loss', type=float)
 @click.option('--vae_alpha_d', help='alpha for vae loss', type=float)
 @click.option('--vae_beta', help='beta for vae loss', type=float)
-@click.option('--mode', help=' ', type=click.Choice(['test', 'train' ]))
+@click.option('--mode', help=' ', type=click.Choice(['test', 'train','hyper_search' ]))
 @click.option('--sample_num', help=' ', type=int, metavar='INT')
 @click.option('--remark', help=' ', type=str)
 def main(ctx, outdir, dry_run, **config_kwargs):
@@ -509,13 +514,63 @@ def main(ctx, outdir, dry_run, **config_kwargs):
       lsundog256     LSUN Dog trained at 256x256 resolution.
       <PATH or URL>  Custom network pickle.
     """
+    if config_kwargs['mode'] is not None and config_kwargs['mode']  !="hyper_search": 
+        train_cifar(None, ctx, outdir, dry_run, config_kwargs  )
+    else:
+
+        config = {
+            "alpha":  tune.loguniform(1e-2, 100 ),
+            "beta":   tune.loguniform(1e-2, 100) 
+        }
+        gpus_per_trial = 0.5
+        num_samples=20
+        max_num_epochs=5
+        metric_name= "fid50k_full_reconstruct"
+        cpus_per_trial=3
+
+        scheduler = ASHAScheduler(
+            metric= metric_name,
+            mode="min",
+            max_t=max_num_epochs,
+            grace_period=2,
+            reduction_factor=2)         
+        reporter = CLIReporter(
+            # parameter_columns=["l1", "l2", "lr", "batch_size"],
+            metric_columns=[  "fid50k_full" , "fid50k_full_reconstruct", "training_iteration"])                   
+        result = tune.run(
+            partial(train_cifar ,ctx=ctx,outdir=outdir,dry_run=dry_run,config_kwargs=config_kwargs),
+            resources_per_trial={"cpu": cpus_per_trial, "gpu": gpus_per_trial},
+            config=config,
+            num_samples=num_samples,
+            scheduler=scheduler,
+            progress_reporter=reporter,
+            checkpoint_at_end=False) 
+            
+
+        best_trial = result.get_best_trial(metric_name, "min", "last")
+        print("Best trial config: {}".format(best_trial.config))
+        print("Best trial final generation fid: {}".format(
+            best_trial.last_result[ "fid50k_full_reconstruct"]))
+        print("Best trial final reconstrction fid: {}".format(
+            best_trial.last_result["fid50k_full"]))
+
+
+def update_config(config_kwargs,config):
+    if config!=None:
+        config_kwargs['vae_alpha_d']=config["alpha"]
+        config_kwargs['vae_alpha_g']=config["alpha"]
+        config_kwargs['vae_beta']=config["beta"]
+
+def train_cifar(config, ctx, outdir, dry_run, config_kwargs  ):
     dnnlib.util.Logger(should_flush=True)
 
+    update_config(config_kwargs,config)
     # Setup training options.
     try:
         run_desc, args = setup_training_loop_kwargs(**config_kwargs)
     except UserError as err:
         ctx.fail(err)
+
 
     # Pick output directory.
     prev_run_dirs = []
@@ -554,7 +609,7 @@ def main(ctx, outdir, dry_run, **config_kwargs):
     os.makedirs(args.run_dir)
     with open(os.path.join(args.run_dir, 'training_options.json'), 'wt') as f:
         json.dump(args, f, indent=2)
-    with open(os.path.join(args.run_dir, 'config.json'), 'wt') as f:
+    with open(os.path.join(args.run_dir, 'init_config.json'), 'wt') as f:
         json.dump(config, f, indent=2)
 
     # Launch processes.
@@ -567,6 +622,7 @@ def main(ctx, outdir, dry_run, **config_kwargs):
         else:
             torch.multiprocessing.spawn(fn=subprocess_fn, args=(args, temp_dir), nprocs=args.num_gpus)
 
+    
 #----------------------------------------------------------------------------
 
 if __name__ == "__main__":

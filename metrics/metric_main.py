@@ -163,4 +163,4 @@ def ppl_wend(opts):
 @register_metric
 def demo(opts):
 
-    return dict(demo_fid=1)
+    return dict(fid50k_full_reconstruct=1)

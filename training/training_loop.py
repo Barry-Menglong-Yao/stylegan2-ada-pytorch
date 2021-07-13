@@ -31,7 +31,7 @@ import logging
 import sys
 from datetime import datetime
 from dnnlib.config import config
- 
+from ray import tune
 
 #----------------------------------------------------------------------------
 
@@ -224,7 +224,7 @@ def training_loop(
          
 
         # Evaluate metrics.  
-        evaluate_metrics(snapshot_data,snapshot_pkl,metrics,num_gpus,rank,device,training_set_kwargs,run_dir,stats_metrics)
+        evaluate_metrics(snapshot_data,snapshot_pkl,metrics,num_gpus,rank,device,training_set_kwargs,run_dir,stats_metrics,image_snapshot_ticks,done,cur_tick)
          
         # Collect statistics.
         for phase in phases:
@@ -307,10 +307,13 @@ def construct_networks(rank,training_set,G_kwargs,D_kwargs,VAE_kwargs,device):
         print('Constructing networks...')
     common_kwargs = dict(c_dim=training_set.label_dim, img_resolution=training_set.resolution, img_channels=training_set.num_channels)
     
-    if config.model_type=="autoencoder_by_GAN" or config.model_type=="VAE_by_GAN":
+    if config.model_type=="autoencoder_by_GAN" or config.model_type=="VAE_by_GAN" or config.model_type=="GAN_VAE":
         G = dnnlib.util.construct_class_by_name(**G_kwargs, **common_kwargs).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
         D = dnnlib.util.construct_class_by_name(**D_kwargs, **common_kwargs).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
-        vae_gan=VaeGan(D,G.mapping,G.synthesis).train().requires_grad_(False).to(device)
+        if not config.is_separate_update_for_vae:
+            vae_gan=VaeGan(D,G.mapping,G.synthesis,config.is_mapping).train().requires_grad_(False).to(device)
+        else:
+            vae_gan=None
     elif config.model_type=="autoencoder":
         vae_gan=Autoencoder(3,512,training_set.label_dim).train().requires_grad_(False).to(device)
         D=vae_gan.encoder
@@ -340,7 +343,8 @@ def print_model(rank,batch_gpu,G,D,vae_gan,device):
         c = torch.empty([batch_gpu, G.c_dim], device=device)
         img = misc.print_module_summary(G, [z, c])
         misc.print_module_summary(D, [img, c,"discriminator"])
-        misc.print_module_summary(vae_gan, [img, c,None])
+        if vae_gan!=None:
+            misc.print_module_summary(vae_gan, [img, c,None])
 
 def setup_augmentation(rank,augment_p,ada_target,augment_kwargs, device):
     if rank == 0:
@@ -359,8 +363,10 @@ def setup_DDP(rank,G,D,G_ema,vae_gan,device,augment_pipe,num_gpus):
     if rank == 0:
         print(f'Distributing across {num_gpus} GPUs...')
     ddp_modules = dict()
-    if config.model_type=="autoencoder_by_GAN":
+    if config.model_type=="autoencoder_by_GAN" or   config.model_type=="VAE_by_GAN":
         module_list=[('vae_gan',vae_gan)]
+    elif config.is_separate_update_for_vae:
+        module_list=[('G_mapping', G.mapping), ('G_synthesis', G.synthesis), ('D', D), (None, G_ema), ('augment_pipe', augment_pipe) ]
     else:
         module_list=[('G_mapping', G.mapping), ('G_synthesis', G.synthesis), ('D', D), (None, G_ema), ('augment_pipe', augment_pipe),('vae_gan',vae_gan)]
     for name, module in module_list:
@@ -377,11 +383,12 @@ def setup_training_phases(device,ddp_modules,loss_kwargs,G,D,vae_gan,G_opt_kwarg
         print('Setting up training phases...')
     loss = dnnlib.util.construct_class_by_name(device=device, **ddp_modules, **loss_kwargs) # subclass of training.loss.Loss
     phases = []
-    if config.model_type=="autoencoder_by_GAN":
+    if config.model_type=="autoencoder_by_GAN" or config.model_type=="VAE_by_GAN":
         module_list=[ ('VAE',vae_gan,D_opt_kwargs,None)]
-    else:
+    elif not config.is_separate_update_for_vae:
         module_list=[('G', G, G_opt_kwargs, G_reg_interval), ('D', D, D_opt_kwargs, D_reg_interval),('VAE',vae_gan,D_opt_kwargs,D_reg_interval)]
-    
+    else:
+        module_list=[('G', G, G_opt_kwargs, G_reg_interval), ('D', D, D_opt_kwargs, D_reg_interval) ]
     for name, module, opt_kwargs, reg_interval in module_list:
         if reg_interval is None:
             opt = dnnlib.util.construct_class_by_name(params=module.parameters(), **opt_kwargs) # subclass of torch.optim.Optimizer
@@ -393,7 +400,7 @@ def setup_training_phases(device,ddp_modules,loss_kwargs,G,D,vae_gan,G_opt_kwarg
             opt_kwargs.betas = [beta ** mb_ratio for beta in opt_kwargs.betas]
             opt = dnnlib.util.construct_class_by_name(module.parameters(), **opt_kwargs) # subclass of torch.optim.Optimizer
             phases += [dnnlib.EasyDict(name=name+'main', module=module, opt=opt, interval=1)]
-            if name !="VAE":
+            if name !="VAE" and config.is_regularization:
                 phases += [dnnlib.EasyDict(name=name+'reg', module=module, opt=opt, interval=reg_interval)]
     
     for phase in phases:
@@ -543,14 +550,19 @@ def save_network(cur_tick,training_set_kwargs,G,D,G_ema,augment_pipe,done,networ
                 pickle.dump(snapshot_data, f)
     return snapshot_data,snapshot_pkl
 
-def evaluate_metrics(snapshot_data,snapshot_pkl,metrics,num_gpus,rank,device,training_set_kwargs,run_dir,stats_metrics):
+def evaluate_metrics(snapshot_data,snapshot_pkl,metrics,num_gpus,rank,device,training_set_kwargs,run_dir,stats_metrics,image_snapshot_ticks,done,cur_tick):
     if (snapshot_data is not None) and (len(metrics) > 0):
         if rank == 0:
             print('Evaluating metrics...')
+        total_result_dict=dict()
         for metric in metrics: 
             result_dict = metric_main.calc_metric(metric=metric, G=snapshot_data['G_ema'],
                 dataset_kwargs=training_set_kwargs, num_gpus=num_gpus, rank=rank, device=device,D=snapshot_data['D'])
             if rank == 0:
                 metric_main.report_metric(result_dict, run_dir=run_dir, snapshot_pkl=snapshot_pkl)
             stats_metrics.update(result_dict.results)
+            total_result_dict.update(result_dict.results)
+        if (rank == 0) and (image_snapshot_ticks is not None) and (done or cur_tick % image_snapshot_ticks == 0):
+            print(total_result_dict)
+            tune.report(**total_result_dict)
     del snapshot_data # conserve memory

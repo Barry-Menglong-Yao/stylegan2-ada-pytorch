@@ -506,7 +506,7 @@ class Generator(torch.nn.Module):
         if self.is_mapping:
             ws = self.mapping(z, c, truncation_psi=truncation_psi, truncation_cutoff=truncation_cutoff)
         else:
-            ws = ws=z.unsqueeze(1).repeat([1, self.G_mapping.num_ws, 1])
+            ws =  z.unsqueeze(1).repeat([1, self.mapping.num_ws, 1])
         img = self.synthesis(ws, **synthesis_kwargs)
         return img
 
@@ -653,11 +653,12 @@ class DiscriminatorEpilogue(torch.nn.Module):
         self.conv = Conv2dLayer(in_channels + mbstd_num_channels, in_channels, kernel_size=3, activation=activation, conv_clamp=conv_clamp)
         self.fc = FullyConnectedLayer(in_channels * (resolution ** 2), in_channels, activation=activation)
         
-        if model_type=="GAN_VAE":
+ 
+        if model_type=="autoencoder_by_GAN":
+            self.fc_z=FullyConnectedLayer(in_channels * (resolution ** 2), in_channels )
+        else:
             self.fc_mu = FullyConnectedLayer(in_channels * (resolution ** 2), in_channels  )
             self.fc_var = FullyConnectedLayer(in_channels * (resolution ** 2), in_channels )
-        elif model_type=="autoencoder_by_GAN":
-            self.fc_z=FullyConnectedLayer(in_channels * (resolution ** 2), in_channels )
 
         self.out = FullyConnectedLayer(in_channels, 1 if cmap_dim == 0 else cmap_dim)
 
@@ -683,12 +684,13 @@ class DiscriminatorEpilogue(torch.nn.Module):
         z=None
         mu=None 
         log_var=None
-        if self.model_type=="GAN_VAE":
+        
+        if self.model_type=="autoencoder_by_GAN":
+            z= self.fc_z(x.flatten(1))
+        else :
             mu = self.fc_mu(x.flatten(1))
             log_var = self.fc_var(x.flatten(1))
             z = self.reparameterize(mu, log_var)
-        elif self.model_type=="autoencoder_by_GAN":
-            z= self.fc_z(x.flatten(1))
         x = self.fc(x.flatten(1))
         
         x = self.out(x)
