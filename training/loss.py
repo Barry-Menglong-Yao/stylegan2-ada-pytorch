@@ -166,9 +166,10 @@ class GANVAELoss(StyleGAN2Loss):
         do_Gpl   = (phase in ['Greg', 'Gboth']) and (self.pl_weight != 0)
         do_Dr1   = (phase in ['Dreg', 'Dboth']) and (self.r1_gamma != 0)
 
+        reconstruct_loss=0
         if not config.is_separate_update_for_vae:
             if do_VAEmain:
-                self.min_vae_loss(real_img, real_c,sync,gain )
+                _,reconstruct_loss=self.min_vae_loss(real_img, real_c,sync,gain )
 
             # Gmain: Maximize logits for generated images.
             if do_Gmain:
@@ -183,7 +184,7 @@ class GANVAELoss(StyleGAN2Loss):
                 if    config.gan_gamma>0:
                     loss_Dgen=self.minimize_gen_logits(gen_z,gen_c,sync,gain)
                 # Dmain: Maximize logits for real images.
-                loss_Dreal,VAE_D_loss =self.maximize_real_logits_min_vae_loss(real_img,do_Dr1,real_c,sync,gain,do_Dmain,False)
+                loss_Dreal,VAE_D_loss,_ =self.maximize_real_logits_min_vae_loss(real_img,do_Dr1,real_c,sync,gain,do_Dmain,False)
                 GAN_D_loss= loss_Dgen + loss_Dreal
                 D_loss= GAN_D_loss+VAE_D_loss
                 # torch.nn.utils.clip_grad_norm_(self.D.parameters(),  1.0)
@@ -196,6 +197,7 @@ class GANVAELoss(StyleGAN2Loss):
                     loss_GAN_G=self.maximize_gen_logits(gen_z,gen_c,sync,do_Gpl ,gain)
                 loss_Emain_reconstruct=self.min_reconstruct_loss(real_img,real_c,sync,gain )
                 training_stats.report('Loss/G/loss',loss_GAN_G+loss_Emain_reconstruct) 
+                reconstruct_loss=loss_Emain_reconstruct
 
             if do_Dmain:
                 # Dmain: Minimize logits for generated images.
@@ -203,13 +205,14 @@ class GANVAELoss(StyleGAN2Loss):
                 if    config.gan_gamma>0:
                     loss_Dgen=self.minimize_gen_logits(gen_z,gen_c,sync,gain)
                 # Dmain: Maximize logits for real images.
-                loss_Dreal,VAE_D_loss =self.maximize_real_logits_min_vae_loss(real_img,do_Dr1,real_c,sync,gain,do_Dmain,True)
+                loss_Dreal,VAE_D_loss,loss_Emain_reconstruct =self.maximize_real_logits_min_vae_loss(real_img,do_Dr1,real_c,sync,gain,do_Dmain,True)
                 #  VAE loss for real images.
                 # VAE_D_loss=self.min_vae_loss(real_img,real_c,sync,gain)
                 GAN_D_loss= loss_Dgen + loss_Dreal
                 D_loss= GAN_D_loss+VAE_D_loss
                 # torch.nn.utils.clip_grad_norm_(self.D.parameters(),  1.0)
                 training_stats.report('Loss/D/loss',D_loss)    
+                reconstruct_loss=loss_Emain_reconstruct
 
 
 
@@ -222,7 +225,7 @@ class GANVAELoss(StyleGAN2Loss):
             if do_Dr1  and config.gan_gamma>0:
                 self.maximize_real_logits_for_r1(real_img,do_Dr1,real_c,sync,gain,do_Dmain)
      
-            
+        return reconstruct_loss
              
         
     def min_reconstruct_loss(self,real_img,real_c,sync,gain):
@@ -310,9 +313,10 @@ class GANVAELoss(StyleGAN2Loss):
                 VAE_D_loss=torch.unsqueeze(VAE_D_loss, 1)
             else:
                 VAE_D_loss=0
+                loss_Emain_reconstruct=0
         with torch.autograd.profiler.record_function(name + '_backward'):
             (real_logits * 0 + loss_Dreal +VAE_D_loss).mean().mul(gain).backward()  
-        return loss_Dreal ,VAE_D_loss
+        return loss_Dreal ,VAE_D_loss,loss_Emain_reconstruct
 
     def min_vae_loss(self,real_img, real_c,sync,gain ):
         name = 'VAE'   
@@ -335,7 +339,7 @@ class GANVAELoss(StyleGAN2Loss):
             VAE_D_loss=torch.unsqueeze(VAE_D_loss, 1)
         with torch.autograd.profiler.record_function(name + '_backward'):
             VAE_D_loss.mean().mul(gain).backward()  
-        return VAE_D_loss
+        return VAE_D_loss, loss_Emain_reconstruct
 
     #not support D_both now
     def maximize_real_logits_for_r1(self,real_img,do_Dr1,real_c,sync,gain,do_Dmain):

@@ -134,7 +134,8 @@ def training_loop(
     progress_fn             = None,     # Callback function for updating training progress. Called for all ranks.
     sample_num =0,
     VAE_kwargs={} ,
-    remark=None
+    remark=None,
+    mode=None
 ):
      
     # Initialize.
@@ -186,7 +187,7 @@ def training_loop(
         phase_real_img,phase_real_c,all_gen_z,all_gen_c=fetch_training_data(training_set_iterator,device,batch_size,phases,batch_gpu,training_set,G)
          
         # Execute training phases.
-        execute_training_phases(phase_real_img,phase_real_c,all_gen_z,all_gen_c,device, batch_idx,phases,batch_size,batch_gpu,num_gpus,loss)
+        reconstruct_loss=execute_training_phases(phase_real_img,phase_real_c,all_gen_z,all_gen_c,device, batch_idx,phases,batch_size,batch_gpu,num_gpus,loss)
 
         # Update G_ema.
         update_G_ema(G,G_ema,ema_kimg,cur_nimg,ema_rampup,batch_size)
@@ -224,7 +225,7 @@ def training_loop(
          
 
         # Evaluate metrics.  
-        evaluate_metrics(snapshot_data,snapshot_pkl,metrics,num_gpus,rank,device,training_set_kwargs,run_dir,stats_metrics,image_snapshot_ticks,done,cur_tick)
+        evaluate_metrics(snapshot_data,snapshot_pkl,metrics,num_gpus,rank,device,training_set_kwargs,run_dir,stats_metrics,image_snapshot_ticks,done,cur_tick,mode,reconstruct_loss)
          
         # Collect statistics.
         for phase in phases:
@@ -268,7 +269,7 @@ def reconstruct_grid(grid_real_images,G_ema,D,grid_c):
         
         G_kwargs = dnnlib.EasyDict()
         G_kwargs.noise_mode='const'
-        reconstructed_img=reconstruct(real_images ,  G_ema,D,grid_c , G_kwargs=G_kwargs )
+        reconstructed_img=reconstruct(real_images ,  G_ema,D,c , G_kwargs=G_kwargs )
          
         grid_reconstructed_images.append(reconstructed_img.cpu())
     grid_reconstructed_images=torch.cat(grid_reconstructed_images).numpy()
@@ -468,12 +469,15 @@ def execute_training_phases(phase_real_img,phase_real_c,all_gen_z,all_gen_c,devi
         phase.module.requires_grad_(True)
 
         # Accumulate gradients over multiple rounds.
+        reconstruct_loss=0
         for round_idx, (real_img, real_c, gen_z, gen_c) in enumerate(zip(phase_real_img, phase_real_c, phase_gen_z, phase_gen_c)):
             sync = (round_idx == batch_size // (batch_gpu * num_gpus) - 1)
             gain = phase.interval
             # with torch.autograd.detect_anomaly():
-            loss.accumulate_gradients(phase=phase.name, real_img=real_img, real_c=real_c, gen_z=gen_z, gen_c=gen_c, sync=sync, gain=gain)
-            
+            cur_reconstruct_loss=loss.accumulate_gradients(phase=phase.name, real_img=real_img, real_c=real_c, gen_z=gen_z, gen_c=gen_c, sync=sync, gain=gain)
+            # if cur_reconstruct_loss!=0:
+            #     reconstruct_loss+=cur_reconstruct_loss
+
         # Update weights.
         phase.module.requires_grad_(False)
         with torch.autograd.profiler.record_function(phase.name + '_opt'):
@@ -484,6 +488,8 @@ def execute_training_phases(phase_real_img,phase_real_c,all_gen_z,all_gen_c,devi
             phase.opt.step()
         if phase.end_event is not None:
             phase.end_event.record(torch.cuda.current_stream(device))
+
+    return reconstruct_loss#.mean()
 
 def update_G_ema(G,G_ema,ema_kimg,cur_nimg,ema_rampup,batch_size):
     with torch.autograd.profiler.record_function('Gema'):
@@ -550,7 +556,7 @@ def save_network(cur_tick,training_set_kwargs,G,D,G_ema,augment_pipe,done,networ
                 pickle.dump(snapshot_data, f)
     return snapshot_data,snapshot_pkl
 
-def evaluate_metrics(snapshot_data,snapshot_pkl,metrics,num_gpus,rank,device,training_set_kwargs,run_dir,stats_metrics,image_snapshot_ticks,done,cur_tick):
+def evaluate_metrics(snapshot_data,snapshot_pkl,metrics,num_gpus,rank,device,training_set_kwargs,run_dir,stats_metrics,image_snapshot_ticks,done,cur_tick,mode,reconstruct_loss_value):
     if (snapshot_data is not None) and (len(metrics) > 0):
         if rank == 0:
             print('Evaluating metrics...')
@@ -562,7 +568,9 @@ def evaluate_metrics(snapshot_data,snapshot_pkl,metrics,num_gpus,rank,device,tra
                 metric_main.report_metric(result_dict, run_dir=run_dir, snapshot_pkl=snapshot_pkl)
             stats_metrics.update(result_dict.results)
             total_result_dict.update(result_dict.results)
-        if (rank == 0) and (image_snapshot_ticks is not None) and (done or cur_tick % image_snapshot_ticks == 0):
-            print(total_result_dict)
-            tune.report(**total_result_dict)
+        if mode=="hyper_search":
+            if (rank == 0) and (image_snapshot_ticks is not None) and (done or cur_tick % image_snapshot_ticks == 0):
+                total_result_dict(reconstruct_loss=reconstruct_loss_value)
+                print(total_result_dict)
+                tune.report(**total_result_dict)
     del snapshot_data # conserve memory

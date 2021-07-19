@@ -11,7 +11,7 @@ config.model_type="GAN_VAE" #autoencoder_by_GAN, VAE_by_GAN
 config.is_regularization=False
 
 config.is_mapping=True
-config.is_separate_update_for_vae=True
+config.is_separate_update_for_vae=False
 
 
 

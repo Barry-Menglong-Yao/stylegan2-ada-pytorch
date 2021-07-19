@@ -4,3 +4,4 @@ out/**
 .vscode/**
 training-runs/**
 datasets/**
+dnnlib/experiment.csv
