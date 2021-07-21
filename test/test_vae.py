@@ -1,7 +1,8 @@
 import torch
 import unittest
-from training  import networks
- 
+from training.model  import networks
+
+from training.model  import VanillaVAE
 
 
 class TestVAE(unittest.TestCase):

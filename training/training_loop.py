@@ -6,8 +6,10 @@
 # distribution of this software and related documentation without an express
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 
-from training.vanilla_vae import Autoencoder, VanillaVAE
-from training.vae_gan_model import VaeGan
+from training.model.gan_demo import GANVAEDEMO
+from training.model.dcgan import DCGANVAE
+from training.model.vanilla_vae import Autoencoder, VanillaVAE
+from training.model.vae_gan_model import VaeGan
 from metrics.metric_utils import reconstruct
 import os
 import time
@@ -319,8 +321,16 @@ def construct_networks(rank,training_set,G_kwargs,D_kwargs,VAE_kwargs,device):
         vae_gan=Autoencoder(3,512,training_set.label_dim).train().requires_grad_(False).to(device)
         D=vae_gan.encoder
         G=vae_gan.decoder
-    else:
+    elif config.model_type=="VAE":
         vae_gan=VanillaVAE(3,512,training_set.label_dim).train().requires_grad_(False).to(device)
+        D=vae_gan.encoder
+        G=vae_gan.decoder
+    elif config.model_type=="DCGAN_VAE":
+        vae_gan=DCGANVAE(100,training_set.label_dim ).train().requires_grad_(False).to(device)
+        D=vae_gan.encoder
+        G=vae_gan.decoder
+    else:
+        vae_gan=GANVAEDEMO(2,training_set.label_dim ).train().requires_grad_(False).to(device)
         D=vae_gan.encoder
         G=vae_gan.decoder
      
@@ -386,10 +396,15 @@ def setup_training_phases(device,ddp_modules,loss_kwargs,G,D,vae_gan,G_opt_kwarg
     phases = []
     if config.model_type=="autoencoder_by_GAN" or config.model_type=="VAE_by_GAN":
         module_list=[ ('VAE',vae_gan,D_opt_kwargs,None)]
-    elif not config.is_separate_update_for_vae:
-        module_list=[('G', G, G_opt_kwargs, G_reg_interval), ('D', D, D_opt_kwargs, D_reg_interval),('VAE',vae_gan,D_opt_kwargs,D_reg_interval)]
+    elif config.model_type=="DCGAN_VAE":
+        module_list=[('G', G, G_opt_kwargs, None), ('D', D, D_opt_kwargs, None),('VAE',vae_gan,D_opt_kwargs,None)]
     else:
-        module_list=[('G', G, G_opt_kwargs, G_reg_interval), ('D', D, D_opt_kwargs, D_reg_interval) ]
+        if not config.is_separate_update_for_vae:
+            module_list=[('G', G, G_opt_kwargs, G_reg_interval), ('D', D, D_opt_kwargs, D_reg_interval),('VAE',vae_gan,D_opt_kwargs,D_reg_interval)]
+        else:
+            module_list=[('G', G, G_opt_kwargs, G_reg_interval), ('D', D, D_opt_kwargs, D_reg_interval) ]
+
+
     for name, module, opt_kwargs, reg_interval in module_list:
         if reg_interval is None:
             opt = dnnlib.util.construct_class_by_name(params=module.parameters(), **opt_kwargs) # subclass of torch.optim.Optimizer

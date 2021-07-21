@@ -13,6 +13,7 @@ from torch_utils import misc
 from torch_utils.ops import conv2d_gradfix
 from dnnlib.config import config  
 #----------------------------------------------------------------------------
+ 
 
 class Loss:
     def accumulate_gradients(self, phase, real_img, real_c, gen_z, gen_c, sync, gain): # to be overridden by subclass
@@ -22,7 +23,7 @@ class Loss:
 
 class StyleGAN2Loss(Loss):
     def __init__(self, device, G_mapping=None, G_synthesis=None, D=None, augment_pipe=None, style_mixing_prob=0.9, r1_gamma=10, pl_batch_shrink=2, pl_decay=0.01, pl_weight=2,gan_type=None,
-    vae_alpha_d=0,vae_beta=0,vae_alpha_g=0,vae_gan=None):
+    vae_alpha_d=0,vae_beta=0,vae_alpha_g=0,vae_gan=None,mode=None):
         super().__init__()
         self.device = device
         self.G_mapping = G_mapping
@@ -40,20 +41,26 @@ class StyleGAN2Loss(Loss):
         self.vae_beta=vae_beta
         self.vae_alpha_g=vae_alpha_g
         self.vae_gan=vae_gan
+        self.mode=mode
 
     def run_G(self, z, c, sync):
-        with misc.ddp_sync(self.G_mapping, sync):
-            ws = self.G_mapping(z, c)
-            if self.style_mixing_prob > 0:
-                with torch.autograd.profiler.record_function('style_mixing'):
-                    cutoff = torch.empty([], dtype=torch.int64, device=ws.device).random_(1, ws.shape[1])
-                    cutoff = torch.where(torch.rand([], device=ws.device) < self.style_mixing_prob, cutoff, torch.full_like(cutoff, ws.shape[1]))
-                    ws[:, cutoff:] = self.G_mapping(torch.randn_like(z), c, skip_w_avg_update=True)[:, cutoff:]
+        if self.G_mapping!=None:
+            with misc.ddp_sync(self.G_mapping, sync):
+                ws = self.G_mapping(z, c)
+                if self.style_mixing_prob > 0:
+                    with torch.autograd.profiler.record_function('style_mixing'):
+                        cutoff = torch.empty([], dtype=torch.int64, device=ws.device).random_(1, ws.shape[1])
+                        cutoff = torch.where(torch.rand([], device=ws.device) < self.style_mixing_prob, cutoff, torch.full_like(cutoff, ws.shape[1]))
+                        ws[:, cutoff:] = self.G_mapping(torch.randn_like(z), c, skip_w_avg_update=True)[:, cutoff:]
+        else:
+            ws=z
         with misc.ddp_sync(self.G_synthesis, sync):
             img = self.G_synthesis(ws)
         return img, ws
 
     def run_D(self, img, c, sync):
+        if self.mode=="debug":
+            print("run_D")
         if self.augment_pipe is not None:
             img = self.augment_pipe(img)
         with misc.ddp_sync(self.D, sync):
@@ -61,6 +68,8 @@ class StyleGAN2Loss(Loss):
         return logits  
 
     def run_Encoder(self, img, c, sync):
+        if self.mode=="debug":
+            print("run_Encoder")
         if self.augment_pipe is not None:
             img = self.augment_pipe(img)
         with misc.ddp_sync(self.D , sync):
@@ -68,7 +77,8 @@ class StyleGAN2Loss(Loss):
         return logits,generated_z ,mu,log_var
 
     def run_VAE(self, img, c, sync):
-         
+        if self.mode=="debug":
+            print("run_VAE")
         with misc.ddp_sync(self.vae_gan, sync):
              reconstructed_img, mu,log_var    = self.vae_gan(img, c,  sync )
         return   reconstructed_img,mu,log_var  
