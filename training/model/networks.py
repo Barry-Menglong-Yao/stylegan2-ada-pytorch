@@ -607,6 +607,8 @@ class MinibatchStdLayer(torch.nn.Module):
     def forward(self, x):
         N, C, H, W = x.shape
         with misc.suppress_tracer_warnings(): # as_tensor results are registered as constants
+            
+          
             G = torch.min(torch.as_tensor(self.group_size), torch.as_tensor(N)) if self.group_size is not None else N
         F = self.num_channels
         c = C // F

@@ -276,7 +276,7 @@ def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel
 
 #----------------------------------------------------------------------------
 
-def compute_feature_stats_for_reconstruct(opts, detector_url, detector_kwargs, rel_lo=0, rel_hi=1, batch_size=64, batch_gen=None, jit=False, data_loader_kwargs=None, max_items=None,  **stats_kwargs):
+def compute_feature_stats_for_reconstruct(opts, detector_url, detector_kwargs, rel_lo=0, rel_hi=1, batch_size=32, batch_gen=None, jit=False, data_loader_kwargs=None, max_items=None,  **stats_kwargs):
     if batch_gen is None:
         batch_gen = min(batch_size, 4)
     dataset = dnnlib.util.construct_class_by_name(**opts.dataset_kwargs)

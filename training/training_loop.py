@@ -487,6 +487,7 @@ def execute_training_phases(phase_real_img,phase_real_c,all_gen_z,all_gen_c,devi
         reconstruct_loss=0
         for round_idx, (real_img, real_c, gen_z, gen_c) in enumerate(zip(phase_real_img, phase_real_c, phase_gen_z, phase_gen_c)):
             sync = (round_idx == batch_size // (batch_gpu * num_gpus) - 1)
+            # print(f"sync: {sync}, {round_idx}, {batch_size},{batch_gpu},{num_gpus}" )
             gain = phase.interval
             # with torch.autograd.detect_anomaly():
             cur_reconstruct_loss=loss.accumulate_gradients(phase=phase.name, real_img=real_img, real_c=real_c, gen_z=gen_z, gen_c=gen_c, sync=sync, gain=gain)
@@ -575,7 +576,7 @@ def evaluate_metrics(snapshot_data,snapshot_pkl,metrics,num_gpus,rank,device,tra
     if (snapshot_data is not None) and (len(metrics) > 0):
         if rank == 0:
             print('Evaluating metrics...')
-        total_result_dict=dict()
+        total_result_dict=dict(reconstruct_loss=reconstruct_loss_value)
         for metric in metrics: 
             result_dict = metric_main.calc_metric(metric=metric, G=snapshot_data['G_ema'],
                 dataset_kwargs=training_set_kwargs, num_gpus=num_gpus, rank=rank, device=device,D=snapshot_data['D'])
@@ -585,7 +586,7 @@ def evaluate_metrics(snapshot_data,snapshot_pkl,metrics,num_gpus,rank,device,tra
             total_result_dict.update(result_dict.results)
         if mode=="hyper_search":
             if (rank == 0) and (image_snapshot_ticks is not None) and (done or cur_tick % image_snapshot_ticks == 0):
-                total_result_dict(reconstruct_loss=reconstruct_loss_value)
+                 
                 print(total_result_dict)
                 tune.report(**total_result_dict)
     del snapshot_data # conserve memory

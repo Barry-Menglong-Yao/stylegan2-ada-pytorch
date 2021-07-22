@@ -12,7 +12,7 @@ import numpy as np
 import torch
 import warnings
 import dnnlib
-
+import sys
 #----------------------------------------------------------------------------
 # Cached construction of constant tensors. Avoids CPU=>GPU copy when the
 # same constant is used multiple times.
@@ -184,6 +184,19 @@ def check_ddp_consistency(module, ignore_regex=None):
         tensor = tensor.detach()
         other = tensor.clone()
         torch.distributed.broadcast(tensor=other, src=0)
+        # try:
+        #     print(f"{fullname} type : {tensor.dtype}" )
+        #     nan_to_num(tensor)
+             
+        # except (RuntimeError, TypeError, NameError):
+        #     print(f"type : {tensor.dtype}" )
+        #     print("Unexpected error:" )
+        # try: 
+        #     print(f"{fullname} type : {tensor.dtype}" )
+        #     nan_to_num(other)
+        # except:
+        #     print(other.dtype)
+        #     print("Unexpected error:" )
         assert (nan_to_num(tensor) == nan_to_num(other)).all(), fullname
 
 #----------------------------------------------------------------------------

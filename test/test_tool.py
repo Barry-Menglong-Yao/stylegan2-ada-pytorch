@@ -103,5 +103,11 @@ def test_conv():
     output = m(input)
     print(output.shape)
 
+def test_dict():
+    total_result_dict=dict(reconstruct_loss=3)
+    result_dict=dict(a=4)
+    total_result_dict.update(result_dict)
+    print(total_result_dict)
+
 if __name__ == '__main__':
-    test_conv()
+    test_dict()
