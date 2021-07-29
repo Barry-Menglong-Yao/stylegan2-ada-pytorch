@@ -2,7 +2,7 @@
 from training.model.interface import Discriminator, Generator, SynthesisNetwork, VaeGan
 from torch import nn
 import torch.nn.functional as F
-
+import torch
 from training.model.spectral_normalization import SpectralNorm
 
 channels = 3
@@ -132,3 +132,33 @@ class VaeGanImpl(VaeGan):
         real_logits,gen_z_of_real_img ,mu,log_var = self.D(real_img, real_c,"encoder")
         reconstructed_img = self.G_synthesis(gen_z_of_real_img)
         return   reconstructed_img,mu,log_var
+
+    def vae_loss(self, reconstructed_img, real_img,mu,log_var,vae_beta,vae_alpha_d):
+        loss = torch.nn.MSELoss(reduction='none')
+        loss_Emain_reconstruct = loss(reconstructed_img, real_img)
+        loss_Emain_reconstruct=loss_Emain_reconstruct.view(loss_Emain_reconstruct.shape[0],-1)
+        loss_Emain_reconstruct=torch.mean(loss_Emain_reconstruct,dim=1)
+        VAE_loss=loss_Emain_reconstruct.mul(vae_alpha_d)
+            
+        kld_loss = -0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1)
+        kld_loss=kld_loss.mul(32/50000).mul( vae_beta)
+        VAE_loss += kld_loss 
+        VAE_loss=torch.unsqueeze(VAE_loss, 1)
+        VAE_loss=VAE_loss.mean()
+        return VAE_loss,loss_Emain_reconstruct
+
+
+    def gan_g_loss(self, gen_logits):
+         
+        loss_Gmain = nn.BCEWithLogitsLoss()(gen_logits,  torch.ones(gen_logits.shape[0], 1).cuda())
+         
+        return loss_Gmain
+
+ 
+    def gan_d_fake_img_loss(self, gen_logits):
+        loss_Dgen=nn.BCEWithLogitsLoss()(gen_logits,  torch.zeros(gen_logits.shape[0], 1).cuda()) 
+        return loss_Dgen
+
+    def gan_d_real_img_loss(self, real_logits):
+        loss_Dreal=nn.BCEWithLogitsLoss()(real_logits,  torch.ones(real_logits.shape[0], 1).cuda()) 
+        return loss_Dreal

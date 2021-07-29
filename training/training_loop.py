@@ -6,7 +6,7 @@
 # distribution of this software and related documentation without an express
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 
-from dnnlib.enums import DgmType, ModelAttribute
+from dnnlib.enums import DgmType, GanType, ModelAttribute
 from training.model.gan_demo import GANVAEDEMO
 from training.model.dcgan import DCGANVAE
 from training.model.vanilla_vae import Autoencoder, VanillaVAE
@@ -138,9 +138,10 @@ def training_loop(
     sample_num =0,
     VAE_kwargs={} ,
     remark=None,
-    mode=None
+    mode=None,
+    model_type="GAN_VAE"
 ):
-    model_attribute=ModelAttribute[config.model_type]
+    model_attribute=ModelAttribute[model_type]
     # Initialize.
     device,start_time=initialize(rank,random_seed,num_gpus,cudnn_benchmark,allow_tf32)
 
@@ -190,7 +191,7 @@ def training_loop(
         phase_real_img,phase_real_c,all_gen_z,all_gen_c=fetch_training_data(training_set_iterator,device,batch_size,phases,batch_gpu,training_set,G)
          
         # Execute training phases.
-        reconstruct_loss=execute_training_phases(phase_real_img,phase_real_c,all_gen_z,all_gen_c,device, batch_idx,phases,batch_size,batch_gpu,num_gpus,loss)
+        reconstruct_loss=execute_training_phases(phase_real_img,phase_real_c,all_gen_z,all_gen_c,device, batch_idx,phases,batch_size,batch_gpu,num_gpus,loss,model_attribute)
 
         # Update G_ema.
         update_G_ema(G,G_ema,ema_kimg,cur_nimg,ema_rampup,batch_size)
@@ -311,35 +312,26 @@ def construct_networks(rank,training_set,G_kwargs,D_kwargs,VAE_kwargs,device,mod
         print('Constructing networks...')
     common_kwargs = dict(c_dim=training_set.label_dim, img_resolution=training_set.resolution, img_channels=training_set.num_channels)
     
-    # if config.model_type=="autoencoder_by_GAN" or config.model_type=="VAE_by_GAN" or config.model_type=="GAN_VAE":
-    G = dnnlib.util.construct_class_by_name(**G_kwargs, **common_kwargs).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
-    D = dnnlib.util.construct_class_by_name(**D_kwargs, **common_kwargs).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
+    
+    G = dnnlib.util.construct_class_by_name(**G_kwargs, **common_kwargs).train() # subclass of torch.nn.Module
+    D = dnnlib.util.construct_class_by_name(**D_kwargs, **common_kwargs).train()  # subclass of torch.nn.Module
+    if model_attribute.gan_type !=GanType.SNGAN:
+        G=G.requires_grad_(False)
+        D=D.requires_grad_(False)
+    G=G.to(device)
+    D=D.to(device)
+
     if not config.is_separate_update_for_vae:
-        vae_gan=dnnlib.util.construct_class_by_name(D,G.mapping,G.synthesis,config.is_mapping,class_name=model_attribute.model_name)
-        vae_gan=vae_gan.train().requires_grad_(False).to(device)
+        vae_gan=dnnlib.util.construct_class_by_name(D,G.mapping,G.synthesis,config.is_mapping,class_name=model_attribute.model_name).train()
+        if model_attribute.gan_type !=GanType.SNGAN:
+            vae_gan=vae_gan.requires_grad_(False) 
+        vae_gan=vae_gan.to(device)
     else:
         vae_gan=None
   
-
-    # elif config.model_type=="autoencoder":
-    #     vae_gan=Autoencoder(3,512,training_set.label_dim).train().requires_grad_(False).to(device)
-    #     D=vae_gan.encoder
-    #     G=vae_gan.decoder
-    # elif config.model_type=="VAE":
-    #     vae_gan=VanillaVAE(3,512,training_set.label_dim).train().requires_grad_(False).to(device)
-    #     D=vae_gan.encoder
-    #     G=vae_gan.decoder
-    # elif config.model_type=="DCGAN_VAE":
-    #     vae_gan=DCGANVAE(100,training_set.label_dim ).train().requires_grad_(False).to(device)
-    #     D=vae_gan.encoder
-    #     G=vae_gan.decoder
-    # else:
-    #     vae_gan=GANVAEDEMO(2,training_set.label_dim ).train().requires_grad_(False).to(device)
-    #     D=vae_gan.encoder
-    #     G=vae_gan.decoder
-     
+ 
     
-    G_ema = copy.deepcopy(G).eval()
+    G_ema = copy.deepcopy(G).eval().requires_grad_(False) 
     return G,D,G_ema,vae_gan
 
 
@@ -391,7 +383,7 @@ def setup_DDP(rank,G,D,G_ema,vae_gan,device,augment_pipe,num_gpus,model_attribut
     for name, module in module_list:
         if (num_gpus > 1) and (module is not None) and len(list(module.parameters())) != 0:
             module.requires_grad_(True)
-            module = torch.nn.parallel.DistributedDataParallel(module, device_ids=[device], broadcast_buffers=False,find_unused_parameters= True)
+            module = torch.nn.parallel.DistributedDataParallel(module, device_ids=[device], broadcast_buffers=False,find_unused_parameters= False)#TODO
             module.requires_grad_(False)
         if name is not None:
             ddp_modules[name] = module
@@ -406,12 +398,16 @@ def setup_training_phases(device,ddp_modules,loss_kwargs,G,D,vae_gan,G_opt_kwarg
     if model_attribute.dgm_type==DgmType.VAE or model_attribute.dgm_type==DgmType.autoencoder:
         module_list=[ ('VAE',vae_gan,D_opt_kwargs,None)]
     elif model_attribute.dgm_type==DgmType.GAN: #TODO G_reg_interval=None
-        module_list=[('G', G, G_opt_kwargs, G_reg_interval), ('D', D, D_opt_kwargs, D_reg_interval) ]
+        module_list=[('G', G, G_opt_kwargs, G_reg_interval)  ]
+        for _ in model_attribute.disc_iters:
+            module_list.append(('D', D, D_opt_kwargs, D_reg_interval) )
     else:
+        module_list=[('G', G, G_opt_kwargs, G_reg_interval)]
+        for _ in range(model_attribute.disc_iters):
+            module_list.append(('D', D, D_opt_kwargs, D_reg_interval) )
         if not config.is_separate_update_for_vae:
-            module_list=[('G', G, G_opt_kwargs, G_reg_interval), ('D', D, D_opt_kwargs, D_reg_interval),('VAE',vae_gan,D_opt_kwargs,D_reg_interval)]
-        else:
-            module_list=[('G', G, G_opt_kwargs, G_reg_interval), ('D', D, D_opt_kwargs, D_reg_interval) ]
+            module_list.append(('VAE',vae_gan,D_opt_kwargs,D_reg_interval))
+         
 
   
 
@@ -424,9 +420,12 @@ def setup_training_phases(device,ddp_modules,loss_kwargs,G,D,vae_gan,G_opt_kwarg
             opt_kwargs = dnnlib.EasyDict(opt_kwargs)
             opt_kwargs.lr = opt_kwargs.lr * mb_ratio
             opt_kwargs.betas = [beta ** mb_ratio for beta in opt_kwargs.betas]
-            opt = dnnlib.util.construct_class_by_name(module.parameters(), **opt_kwargs) # subclass of torch.optim.Optimizer
+            if model_attribute.gan_type ==GanType.SNGAN and name!='G':
+                opt = dnnlib.util.construct_class_by_name(filter(lambda p: p.requires_grad, module.parameters()), **opt_kwargs) # subclass of torch.optim.Optimizer
+            else:
+                opt = dnnlib.util.construct_class_by_name(module.parameters(), **opt_kwargs) # subclass of torch.optim.Optimizer
             phases += [dnnlib.EasyDict(name=name+'main', module=module, opt=opt, interval=1)]
-            if name !="VAE" and config.is_regularization:
+            if name !="VAE" and model_attribute.gan_type.is_regularization:
                 phases += [dnnlib.EasyDict(name=name+'reg', module=module, opt=opt, interval=reg_interval)]
     
     for phase in phases:
@@ -482,7 +481,7 @@ def fetch_training_data(training_set_iterator,device,batch_size,phases,batch_gpu
         all_gen_c = [phase_gen_c.split(batch_gpu) for phase_gen_c in all_gen_c.split(batch_size)]
     return phase_real_img,phase_real_c,all_gen_z,all_gen_c
 
-def execute_training_phases(phase_real_img,phase_real_c,all_gen_z,all_gen_c,device, batch_idx,phases,batch_size,batch_gpu,num_gpus,loss):
+def execute_training_phases(phase_real_img,phase_real_c,all_gen_z,all_gen_c,device, batch_idx,phases,batch_size,batch_gpu,num_gpus,loss,model_attribute):
     for phase, phase_gen_z, phase_gen_c in zip(phases, all_gen_z, all_gen_c):
         if batch_idx % phase.interval != 0:
             continue
@@ -491,7 +490,8 @@ def execute_training_phases(phase_real_img,phase_real_c,all_gen_z,all_gen_c,devi
         if phase.start_event is not None:
             phase.start_event.record(torch.cuda.current_stream(device))
         phase.opt.zero_grad(set_to_none=True)
-        phase.module.requires_grad_(True)
+        if model_attribute.gan_type !=GanType.SNGAN:
+            phase.module.requires_grad_(True)
 
         # Accumulate gradients over multiple rounds.
         reconstruct_loss=0
@@ -500,12 +500,13 @@ def execute_training_phases(phase_real_img,phase_real_c,all_gen_z,all_gen_c,devi
             # print(f"sync: {sync}, {round_idx}, {batch_size},{batch_gpu},{num_gpus}" )
             gain = phase.interval
             # with torch.autograd.detect_anomaly():
-            cur_reconstruct_loss=loss.accumulate_gradients(phase=phase.name, real_img=real_img, real_c=real_c, gen_z=gen_z, gen_c=gen_c, sync=sync, gain=gain)
+            cur_reconstruct_loss=loss.accumulate_gradients(phase=phase.name, real_img=real_img, real_c=real_c, gen_z=gen_z, gen_c=gen_c, sync=sync, gain=gain,model_attribute=model_attribute)
             # if cur_reconstruct_loss!=0:
             #     reconstruct_loss+=cur_reconstruct_loss
 
         # Update weights.
-        phase.module.requires_grad_(False)
+        if model_attribute.gan_type !=GanType.SNGAN:
+            phase.module.requires_grad_(False)
         with torch.autograd.profiler.record_function(phase.name + '_opt'):
             
             for param in phase.module.parameters():
@@ -525,8 +526,11 @@ def update_G_ema(G,G_ema,ema_kimg,cur_nimg,ema_rampup,batch_size):
         ema_beta = 0.5 ** (batch_size / max(ema_nimg, 1e-8))
         for p_ema, p in zip(G_ema.parameters(), G.parameters()):
             p_ema.copy_(p.lerp(p_ema, ema_beta))
+             
         for b_ema, b in zip(G_ema.buffers(), G.buffers()):
             b_ema.copy_(b)
+            
+         
 
 def accumulate(cur_tick,cur_nimg, start_time,tick_start_time,maintenance_time,device,augment_pipe,tick_start_nimg,rank):
     tick_end_time = time.time()

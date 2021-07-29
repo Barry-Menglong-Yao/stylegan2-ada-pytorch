@@ -77,6 +77,7 @@ def setup_training_loop_kwargs(
     sample_num=0,
     mode=None,
     remark=None,
+    model_type=None,
 ):
     args = dnnlib.EasyDict()
 
@@ -91,6 +92,7 @@ def setup_training_loop_kwargs(
         raise UserError('--gpus must be a power of two')
     args.num_gpus = gpus
     args.remark=remark
+    args.model_type=model_type
     if snap is None:
         snap = 50
     assert isinstance(snap, int)
@@ -173,6 +175,7 @@ def setup_training_loop_kwargs(
         'paper1024': dict(ref_gpus=8,  kimg=25000,  mb=32, mbstd=4,  fmaps=1,   lrate=0.002,  gamma=2,    ema=10,  ramp=None, map=8),
         'cifar':     dict(ref_gpus=2,  kimg=100000, mb=64, mbstd=32, fmaps=1,   lrate=0.0025, gamma=0.01, ema=500, ramp=0.05, map=2),
         'dcgan':     dict(ref_gpus=1,  kimg=10000, mb=64, mbstd=32, fmaps=1,   lrate=0.0002, gamma=0.01, ema=500, ramp=0.05, map=2),
+        'sngan':     dict(ref_gpus=1,  kimg=10000, mb=64, mbstd=32, fmaps=1,   lrate=0.0002, gamma=0.01, ema=500, ramp=0.05, map=2),
     }
 
     assert cfg in cfg_specs
@@ -188,7 +191,7 @@ def setup_training_loop_kwargs(
         spec.gamma = 0.0002 * (res ** 2) / spec.mb # heuristic formula
         spec.ema = spec.mb * 10 / 32
 
-    model_attribute=ModelAttribute[config.model_type]
+    model_attribute=ModelAttribute[model_type]
     args.G_kwargs = dnnlib.EasyDict(class_name=model_attribute.g_model_name, z_dim=model_attribute.z_dim, w_dim=model_attribute.z_dim, mapping_kwargs=dnnlib.EasyDict(), synthesis_kwargs=dnnlib.EasyDict())
     args.D_kwargs = dnnlib.EasyDict(class_name=model_attribute.d_model_name, block_kwargs=dnnlib.EasyDict(), mapping_kwargs=dnnlib.EasyDict(), epilogue_kwargs=dnnlib.EasyDict())
     args.G_kwargs.synthesis_kwargs.channel_base = args.D_kwargs.channel_base = int(spec.fmaps * 32768)
@@ -446,7 +449,7 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--mirror', help='Enable dataset x-flips [default: false]', type=bool, metavar='BOOL')
 
 # Base config.
-@click.option('--cfg', help='Base config [default: auto]', type=click.Choice(['auto', 'stylegan2', 'paper256', 'paper512', 'paper1024', 'cifar','dcgan']))
+@click.option('--cfg', help='Base config [default: auto]', type=click.Choice(['auto', 'stylegan2', 'paper256', 'paper512', 'paper1024', 'cifar','dcgan','sngan']))
 @click.option('--gamma', help='Override R1 gamma', type=float)
 @click.option('--kimg', help='Override training duration', type=int, metavar='INT')
 @click.option('--batch', help='Override batch size', type=int, metavar='INT')
@@ -475,6 +478,7 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--mode', help=' ', type=click.Choice(['test', 'train','hyper_search','debug' ]))
 @click.option('--sample_num', help=' ', type=int, metavar='INT')
 @click.option('--remark', help=' ', type=str)
+@click.option('--model_type', help=' ', type=click.Choice(['SNGAN','SNGAN_VAE', 'autoencoder_by_GAN','VAE_by_GAN',  'GAN_VAE','VAE', 'DCGAN_VAE', 'GAN_VAE_DEMO']))
 def main(ctx, outdir, dry_run, **config_kwargs):
     """Train a GAN using the techniques described in the paper
     "Training Generative Adversarial Networks with Limited Data".
