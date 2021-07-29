@@ -9,6 +9,7 @@
 """Train a GAN using the techniques described in the paper
 "Training Generative Adversarial Networks with Limited Data"."""
 
+from dnnlib.enums import ModelAttribute
 from metrics.metric_utils import reconstruct
 import os
 import click
@@ -187,8 +188,9 @@ def setup_training_loop_kwargs(
         spec.gamma = 0.0002 * (res ** 2) / spec.mb # heuristic formula
         spec.ema = spec.mb * 10 / 32
 
-    args.G_kwargs = dnnlib.EasyDict(class_name='training.model.networks.Generator', z_dim=512, w_dim=512, mapping_kwargs=dnnlib.EasyDict(), synthesis_kwargs=dnnlib.EasyDict())
-    args.D_kwargs = dnnlib.EasyDict(class_name='training.model.networks.Discriminator', block_kwargs=dnnlib.EasyDict(), mapping_kwargs=dnnlib.EasyDict(), epilogue_kwargs=dnnlib.EasyDict())
+    model_attribute=ModelAttribute[config.model_type]
+    args.G_kwargs = dnnlib.EasyDict(class_name=model_attribute.g_model_name, z_dim=model_attribute.z_dim, w_dim=model_attribute.z_dim, mapping_kwargs=dnnlib.EasyDict(), synthesis_kwargs=dnnlib.EasyDict())
+    args.D_kwargs = dnnlib.EasyDict(class_name=model_attribute.d_model_name, block_kwargs=dnnlib.EasyDict(), mapping_kwargs=dnnlib.EasyDict(), epilogue_kwargs=dnnlib.EasyDict())
     args.G_kwargs.synthesis_kwargs.channel_base = args.D_kwargs.channel_base = int(spec.fmaps * 32768)
     args.G_kwargs.synthesis_kwargs.channel_max = args.D_kwargs.channel_max = 512
     args.G_kwargs.mapping_kwargs.num_layers = spec.map
@@ -389,6 +391,7 @@ def setup_training_loop_kwargs(
     return desc, args
 
 #----------------------------------------------------------------------------
+ 
 
 def subprocess_fn(rank, args, temp_dir):
     dnnlib.util.Logger(file_name=os.path.join(args.run_dir, 'log.txt'), file_mode='a', should_flush=True)

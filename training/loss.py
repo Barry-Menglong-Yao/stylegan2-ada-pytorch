@@ -6,6 +6,7 @@
 # distribution of this software and related documentation without an express
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 
+from dnnlib.enums import DgmType, ModelAttribute
 import numpy as np
 import torch
 from torch_utils import training_stats
@@ -173,10 +174,12 @@ class GANVAELoss(StyleGAN2Loss):
         do_Gpl   = (phase in ['Greg', 'Gboth']) and (self.pl_weight != 0)
         do_Dr1   = (phase in ['Dreg', 'Dboth']) and (self.r1_gamma != 0)
 
+        model_attribute=ModelAttribute[config.model_type]
         reconstruct_loss=0
         if not config.is_separate_update_for_vae:
-            if do_VAEmain:
-                _,reconstruct_loss=self.min_vae_loss(real_img, real_c,sync,gain )
+            if do_VAEmain :  
+                if model_attribute.dgm_type !=DgmType.GAN:
+                    _,reconstruct_loss=self.min_vae_loss(real_img, real_c,sync,gain )
 
             # Gmain: Maximize logits for generated images.
             if do_Gmain:
@@ -224,7 +227,7 @@ class GANVAELoss(StyleGAN2Loss):
 
 
         # Gpl: Apply path length regularization.
-        if config.is_regularization:
+        if model_attribute.gan_type.is_regularization:
             if do_Gpl and config.gan_gamma>0:
                 self.apply_gpl_regularization(gen_z, gen_c,sync,gain )
                 

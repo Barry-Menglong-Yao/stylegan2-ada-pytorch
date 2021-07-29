@@ -9,11 +9,11 @@ config.gan_loss_type="GAN"
 config.gan_gamma =1
 config.is_separate_update_for_vae=False
 
-# config.model_type="GAN_VAE" #autoencoder_by_GAN, VAE_by_GAN, VAE, GAN_VAE, DCGAN_VAE, GAN_VAE_DEMO
+# config.model_type="SNGAN" #SNGAN, autoencoder_by_GAN, VAE_by_GAN, VAE, GAN_VAE, DCGAN_VAE, GAN_VAE_DEMO
 # config.is_regularization=False
 # config.is_mapping=False
 
-config.model_type="GAN_VAE" #autoencoder_by_GAN, VAE_by_GAN, VAE, GAN_VAE, DCGAN_VAE
+config.model_type="SNGAN" #autoencoder_by_GAN, VAE_by_GAN, VAE, GAN_VAE, DCGAN_VAE
 config.is_regularization=True
 config.is_mapping=True
 

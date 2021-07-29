@@ -6,6 +6,7 @@
 # distribution of this software and related documentation without an express
 # license agreement from NVIDIA CORPORATION is strictly prohibited.
 
+from dnnlib.enums import DgmType, ModelAttribute
 from training.model.gan_demo import GANVAEDEMO
 from training.model.dcgan import DCGANVAE
 from training.model.vanilla_vae import Autoencoder, VanillaVAE
@@ -139,7 +140,7 @@ def training_loop(
     remark=None,
     mode=None
 ):
-     
+    model_attribute=ModelAttribute[config.model_type]
     # Initialize.
     device,start_time=initialize(rank,random_seed,num_gpus,cudnn_benchmark,allow_tf32)
 
@@ -147,7 +148,7 @@ def training_loop(
     training_set_iterator,training_set=load_training_set(rank,training_set_kwargs,num_gpus,random_seed,batch_size,data_loader_kwargs)
 
     # Construct networks.
-    G,D,G_ema,vae_gan=construct_networks(rank,training_set,G_kwargs,D_kwargs,VAE_kwargs,device)
+    G,D,G_ema,vae_gan=construct_networks(rank,training_set,G_kwargs,D_kwargs,VAE_kwargs,device,model_attribute)
      
     # Resume from existing pickle.
     resume(G,D,G_ema,rank,resume_pkl)
@@ -159,10 +160,10 @@ def training_loop(
     ada_stats,augment_pipe=setup_augmentation(rank,augment_p,ada_target,augment_kwargs,  device )
      
     # Distribute across GPUs.
-    ddp_modules=setup_DDP(rank,G,D,G_ema,vae_gan,device,augment_pipe,num_gpus)
+    ddp_modules=setup_DDP(rank,G,D,G_ema,vae_gan,device,augment_pipe,num_gpus,model_attribute)
      
     # Setup training phases.
-    phases,loss=setup_training_phases(device,ddp_modules,loss_kwargs,G,D,vae_gan,G_opt_kwargs,G_reg_interval,D_opt_kwargs,D_reg_interval,rank)
+    phases,loss=setup_training_phases(device,ddp_modules,loss_kwargs,G,D,vae_gan,G_opt_kwargs,G_reg_interval,D_opt_kwargs,D_reg_interval,rank,model_attribute)
  
 
     # Export sample images.
@@ -305,34 +306,37 @@ def load_training_set(rank,training_set_kwargs,num_gpus,random_seed,batch_size,d
     return training_set_iterator,training_set
 
 
-def construct_networks(rank,training_set,G_kwargs,D_kwargs,VAE_kwargs,device):
+def construct_networks(rank,training_set,G_kwargs,D_kwargs,VAE_kwargs,device,model_attribute):
     if rank == 0:
         print('Constructing networks...')
     common_kwargs = dict(c_dim=training_set.label_dim, img_resolution=training_set.resolution, img_channels=training_set.num_channels)
     
-    if config.model_type=="autoencoder_by_GAN" or config.model_type=="VAE_by_GAN" or config.model_type=="GAN_VAE":
-        G = dnnlib.util.construct_class_by_name(**G_kwargs, **common_kwargs).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
-        D = dnnlib.util.construct_class_by_name(**D_kwargs, **common_kwargs).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
-        if not config.is_separate_update_for_vae:
-            vae_gan=VaeGan(D,G.mapping,G.synthesis,config.is_mapping).train().requires_grad_(False).to(device)
-        else:
-            vae_gan=None
-    elif config.model_type=="autoencoder":
-        vae_gan=Autoencoder(3,512,training_set.label_dim).train().requires_grad_(False).to(device)
-        D=vae_gan.encoder
-        G=vae_gan.decoder
-    elif config.model_type=="VAE":
-        vae_gan=VanillaVAE(3,512,training_set.label_dim).train().requires_grad_(False).to(device)
-        D=vae_gan.encoder
-        G=vae_gan.decoder
-    elif config.model_type=="DCGAN_VAE":
-        vae_gan=DCGANVAE(100,training_set.label_dim ).train().requires_grad_(False).to(device)
-        D=vae_gan.encoder
-        G=vae_gan.decoder
+    # if config.model_type=="autoencoder_by_GAN" or config.model_type=="VAE_by_GAN" or config.model_type=="GAN_VAE":
+    G = dnnlib.util.construct_class_by_name(**G_kwargs, **common_kwargs).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
+    D = dnnlib.util.construct_class_by_name(**D_kwargs, **common_kwargs).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
+    if not config.is_separate_update_for_vae:
+        vae_gan=dnnlib.util.construct_class_by_name(D,G.mapping,G.synthesis,config.is_mapping,class_name=model_attribute.model_name)
+        vae_gan=vae_gan.train().requires_grad_(False).to(device)
     else:
-        vae_gan=GANVAEDEMO(2,training_set.label_dim ).train().requires_grad_(False).to(device)
-        D=vae_gan.encoder
-        G=vae_gan.decoder
+        vae_gan=None
+  
+
+    # elif config.model_type=="autoencoder":
+    #     vae_gan=Autoencoder(3,512,training_set.label_dim).train().requires_grad_(False).to(device)
+    #     D=vae_gan.encoder
+    #     G=vae_gan.decoder
+    # elif config.model_type=="VAE":
+    #     vae_gan=VanillaVAE(3,512,training_set.label_dim).train().requires_grad_(False).to(device)
+    #     D=vae_gan.encoder
+    #     G=vae_gan.decoder
+    # elif config.model_type=="DCGAN_VAE":
+    #     vae_gan=DCGANVAE(100,training_set.label_dim ).train().requires_grad_(False).to(device)
+    #     D=vae_gan.encoder
+    #     G=vae_gan.decoder
+    # else:
+    #     vae_gan=GANVAEDEMO(2,training_set.label_dim ).train().requires_grad_(False).to(device)
+    #     D=vae_gan.encoder
+    #     G=vae_gan.decoder
      
     
     G_ema = copy.deepcopy(G).eval()
@@ -370,40 +374,46 @@ def setup_augmentation(rank,augment_p,ada_target,augment_kwargs, device):
     return ada_stats,augment_pipe
 
 
-def setup_DDP(rank,G,D,G_ema,vae_gan,device,augment_pipe,num_gpus):
+def setup_DDP(rank,G,D,G_ema,vae_gan,device,augment_pipe,num_gpus,model_attribute):
     if rank == 0:
         print(f'Distributing across {num_gpus} GPUs...')
     ddp_modules = dict()
-    if config.model_type=="autoencoder_by_GAN" or   config.model_type=="VAE_by_GAN":
+
+    if model_attribute.dgm_type==DgmType.VAE or model_attribute.dgm_type==DgmType.autoencoder:
         module_list=[('vae_gan',vae_gan)]
-    elif config.is_separate_update_for_vae:
+    elif model_attribute.dgm_type==DgmType.GAN:
         module_list=[('G_mapping', G.mapping), ('G_synthesis', G.synthesis), ('D', D), (None, G_ema), ('augment_pipe', augment_pipe) ]
     else:
-        module_list=[('G_mapping', G.mapping), ('G_synthesis', G.synthesis), ('D', D), (None, G_ema), ('augment_pipe', augment_pipe),('vae_gan',vae_gan)]
+        if config.is_separate_update_for_vae:
+            module_list=[('G_mapping', G.mapping), ('G_synthesis', G.synthesis), ('D', D), (None, G_ema), ('augment_pipe', augment_pipe) ]
+        else:
+            module_list=[('G_mapping', G.mapping), ('G_synthesis', G.synthesis), ('D', D), (None, G_ema), ('augment_pipe', augment_pipe),('vae_gan',vae_gan)]
     for name, module in module_list:
         if (num_gpus > 1) and (module is not None) and len(list(module.parameters())) != 0:
             module.requires_grad_(True)
-            module = torch.nn.parallel.DistributedDataParallel(module, device_ids=[device], broadcast_buffers=False,find_unused_parameters=True)
+            module = torch.nn.parallel.DistributedDataParallel(module, device_ids=[device], broadcast_buffers=False,find_unused_parameters= True)
             module.requires_grad_(False)
         if name is not None:
             ddp_modules[name] = module
     return ddp_modules
 
-def setup_training_phases(device,ddp_modules,loss_kwargs,G,D,vae_gan,G_opt_kwargs,G_reg_interval,D_opt_kwargs,D_reg_interval,rank):
+def setup_training_phases(device,ddp_modules,loss_kwargs,G,D,vae_gan,G_opt_kwargs,G_reg_interval,D_opt_kwargs,D_reg_interval,rank,model_attribute):
     if rank == 0:
         print('Setting up training phases...')
     loss = dnnlib.util.construct_class_by_name(device=device, **ddp_modules, **loss_kwargs) # subclass of training.loss.Loss
     phases = []
-    if config.model_type=="autoencoder_by_GAN" or config.model_type=="VAE_by_GAN":
+
+    if model_attribute.dgm_type==DgmType.VAE or model_attribute.dgm_type==DgmType.autoencoder:
         module_list=[ ('VAE',vae_gan,D_opt_kwargs,None)]
-    elif config.model_type=="DCGAN_VAE":
-        module_list=[('G', G, G_opt_kwargs, None), ('D', D, D_opt_kwargs, None),('VAE',vae_gan,D_opt_kwargs,None)]
+    elif model_attribute.dgm_type==DgmType.GAN: #TODO G_reg_interval=None
+        module_list=[('G', G, G_opt_kwargs, G_reg_interval), ('D', D, D_opt_kwargs, D_reg_interval) ]
     else:
         if not config.is_separate_update_for_vae:
             module_list=[('G', G, G_opt_kwargs, G_reg_interval), ('D', D, D_opt_kwargs, D_reg_interval),('VAE',vae_gan,D_opt_kwargs,D_reg_interval)]
         else:
             module_list=[('G', G, G_opt_kwargs, G_reg_interval), ('D', D, D_opt_kwargs, D_reg_interval) ]
 
+  
 
     for name, module, opt_kwargs, reg_interval in module_list:
         if reg_interval is None:
