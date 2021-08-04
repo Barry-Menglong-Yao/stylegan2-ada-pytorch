@@ -42,20 +42,7 @@ class VaeGan(torch.nn.Module):
         return VAE_loss,loss_Emain_reconstruct
 
 
-    def gan_g_loss(self, gen_logits):
-        loss_Gmain = torch.nn.functional.softplus(-gen_logits) # -log(sigmoid(gen_logits))
-        loss_Gmain=loss_Gmain.mul(config.gan_gamma)
-        loss_Gmain=loss_Gmain.mean()
-        return loss_Gmain
+    
 
  
-    def gan_d_fake_img_loss(self, gen_logits):
-        loss_Dgen = torch.nn.functional.softplus(gen_logits)   # -log(1 - sigmoid(gen_logits))
-        loss_Dgen=loss_Dgen.mean()
-        return loss_Dgen
-
-    def gan_d_real_img_loss(self, real_logits):
-        loss_Dreal = torch.nn.functional.softplus(-real_logits) # -log(sigmoid(real_logits))
-        loss_Dreal=loss_Dreal.mul(   config.gan_gamma)
-        loss_Dreal=(real_logits * 0 + loss_Dreal ).mean()
-        return loss_Dreal
+    

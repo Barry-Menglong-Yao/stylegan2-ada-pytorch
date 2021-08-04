@@ -260,7 +260,7 @@ class GANVAELoss(StyleGAN2Loss):
             gen_logits = self.run_D(gen_img, gen_c, sync=False)
             training_stats.report('Loss/scores/fake', gen_logits)
             training_stats.report('Loss/signs/fake', gen_logits.sign())
-            loss_Gmain=self.vae_gan.gan_g_loss(gen_logits)
+            loss_Gmain=self.G_synthesis.gan_g_loss(gen_logits)
             # training_stats.report('Loss/G/loss', loss_Gmain)
         with torch.autograd.profiler.record_function('Gmain_backward'):
             loss_Gmain.mul(gain).backward()
@@ -289,7 +289,7 @@ class GANVAELoss(StyleGAN2Loss):
             gen_logits = self.run_D(gen_img, gen_c, sync=sync) # Gets synced by loss_Dreal.
             training_stats.report('Loss/scores/fake', gen_logits)
             training_stats.report('Loss/signs/fake', gen_logits.sign())
-            loss_Dgen=self.vae_gan.gan_d_fake_img_loss(gen_logits)  
+            loss_Dgen=self.D.gan_d_fake_img_loss(gen_logits)  
                          
         with torch.autograd.profiler.record_function('Dgen_backward'):
             loss_Dgen.mul(gain).backward()
@@ -319,7 +319,7 @@ class GANVAELoss(StyleGAN2Loss):
 
             training_stats.report('Loss/scores/real', real_logits)
             training_stats.report('Loss/signs/real', real_logits.sign())
-            loss_Dreal=self.vae_gan.gan_d_real_img_loss(real_logits)
+            loss_Dreal=self.D.gan_d_real_img_loss(real_logits)
         with torch.autograd.profiler.record_function(name + '_backward'):
             loss_Dreal.mul(gain).backward()  
         return loss_Dreal ,VAE_D_loss,loss_Emain_reconstruct

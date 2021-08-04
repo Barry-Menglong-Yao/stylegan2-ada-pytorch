@@ -70,6 +70,12 @@ class SynthesisNetworkImpl(SynthesisNetwork):
     def forward(self,   ws, **block_kwargs):
         return self.model(ws.view(-1, self.z_dim, 1, 1))
 
+    def gan_g_loss(self, gen_logits):
+         
+        loss_Gmain = nn.BCEWithLogitsLoss()(gen_logits,  torch.ones(gen_logits.shape[0], 1).cuda())
+         
+        return loss_Gmain
+
 class DiscriminatorImpl(Discriminator):
     def __init__(self,
         c_dim,                          # Conditioning label (C) dimensionality.
@@ -118,6 +124,20 @@ class DiscriminatorImpl(Discriminator):
         z = self.reparameterize(mu, log_var)
         return out,z, mu,log_var
 
+    def forward(self, img, c,role, **block_kwargs):
+        x,z,mu,log_var=self.inner_forward(img,c,role,**block_kwargs)
+
+        if role=="discriminator":
+            return x
+        else:
+            return x,z,mu,log_var
+    def gan_d_fake_img_loss(self, gen_logits):
+        loss_Dgen=nn.BCEWithLogitsLoss()(gen_logits,  torch.zeros(gen_logits.shape[0], 1).cuda()) 
+        return loss_Dgen
+
+    def gan_d_real_img_loss(self, real_logits):
+        loss_Dreal=nn.BCEWithLogitsLoss()(real_logits,  torch.ones(real_logits.shape[0], 1).cuda()) 
+        return loss_Dreal
 
  
 
@@ -148,17 +168,7 @@ class VaeGanImpl(VaeGan):
         return VAE_loss,loss_Emain_reconstruct
 
 
-    def gan_g_loss(self, gen_logits):
-         
-        loss_Gmain = nn.BCEWithLogitsLoss()(gen_logits,  torch.ones(gen_logits.shape[0], 1).cuda())
-         
-        return loss_Gmain
+    
 
  
-    def gan_d_fake_img_loss(self, gen_logits):
-        loss_Dgen=nn.BCEWithLogitsLoss()(gen_logits,  torch.zeros(gen_logits.shape[0], 1).cuda()) 
-        return loss_Dgen
-
-    def gan_d_real_img_loss(self, real_logits):
-        loss_Dreal=nn.BCEWithLogitsLoss()(real_logits,  torch.ones(real_logits.shape[0], 1).cuda()) 
-        return loss_Dreal
+    

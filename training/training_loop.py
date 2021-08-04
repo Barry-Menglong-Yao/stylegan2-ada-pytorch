@@ -260,7 +260,7 @@ def training_loop(
 #----------------------------------------------------------------------------
 def save_image(rank,image_snapshot_ticks,done,cur_tick,G_ema,grid_z,grid_c,run_dir,cur_nimg,grid_size,real_images,D):
     if (rank == 0) and (image_snapshot_ticks is not None) and (done or cur_tick % image_snapshot_ticks == 0):
-        images = torch.cat([G_ema(z=z, c=c, noise_mode='const').cpu() for z, c in zip(grid_z, grid_c)]).numpy()
+        images = torch.cat([G_ema(z=z, c=c, noise_mode='const').detach().cpu() for z, c in zip(grid_z, grid_c)]).numpy()
         save_image_grid(images, os.path.join(run_dir, f'fakes{cur_nimg//1000:06d}.png'), drange=[-1,1], grid_size=grid_size)
 
         grid_reconstructed_images=reconstruct_grid(real_images,G_ema,D,grid_c)
@@ -316,8 +316,8 @@ def construct_networks(rank,training_set,G_kwargs,D_kwargs,VAE_kwargs,device,mod
     G = dnnlib.util.construct_class_by_name(**G_kwargs, **common_kwargs).train() # subclass of torch.nn.Module
     D = dnnlib.util.construct_class_by_name(**D_kwargs, **common_kwargs).train()  # subclass of torch.nn.Module
     if model_attribute.gan_type !=GanType.SNGAN:
-        G=G.requires_grad_(False)
         D=D.requires_grad_(False)
+        G=G.requires_grad_(False)
     G=G.to(device)
     D=D.to(device)
 
@@ -399,7 +399,7 @@ def setup_training_phases(device,ddp_modules,loss_kwargs,G,D,vae_gan,G_opt_kwarg
         module_list=[ ('VAE',vae_gan,D_opt_kwargs,None)]
     elif model_attribute.dgm_type==DgmType.GAN: #TODO G_reg_interval=None
         module_list=[('G', G, G_opt_kwargs, G_reg_interval)  ]
-        for _ in model_attribute.disc_iters:
+        for _ in range(model_attribute.disc_iters):
             module_list.append(('D', D, D_opt_kwargs, D_reg_interval) )
     else:
         module_list=[('G', G, G_opt_kwargs, G_reg_interval)]
@@ -490,8 +490,8 @@ def execute_training_phases(phase_real_img,phase_real_c,all_gen_z,all_gen_c,devi
         if phase.start_event is not None:
             phase.start_event.record(torch.cuda.current_stream(device))
         phase.opt.zero_grad(set_to_none=True)
-        if model_attribute.gan_type !=GanType.SNGAN:
-            phase.module.requires_grad_(True)
+         
+        phase.module.requires_grad_(True)
 
         # Accumulate gradients over multiple rounds.
         reconstruct_loss=0
@@ -505,8 +505,8 @@ def execute_training_phases(phase_real_img,phase_real_c,all_gen_z,all_gen_c,devi
             #     reconstruct_loss+=cur_reconstruct_loss
 
         # Update weights.
-        if model_attribute.gan_type !=GanType.SNGAN:
-            phase.module.requires_grad_(False)
+         
+        phase.module.requires_grad_(False)
         with torch.autograd.profiler.record_function(phase.name + '_opt'):
             
             for param in phase.module.parameters():

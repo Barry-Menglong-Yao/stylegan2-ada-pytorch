@@ -33,6 +33,6 @@ def gen_config_str():
 
 def gen_run_desc_from_config():
     run_desc=""
-    run_desc +="-"+config.model_type
+    # run_desc +="-"+config.model_type
     return run_desc
         

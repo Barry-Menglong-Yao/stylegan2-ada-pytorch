@@ -175,7 +175,7 @@ def setup_training_loop_kwargs(
         'paper1024': dict(ref_gpus=8,  kimg=25000,  mb=32, mbstd=4,  fmaps=1,   lrate=0.002,  gamma=2,    ema=10,  ramp=None, map=8),
         'cifar':     dict(ref_gpus=2,  kimg=100000, mb=64, mbstd=32, fmaps=1,   lrate=0.0025, gamma=0.01, ema=500, ramp=0.05, map=2),
         'dcgan':     dict(ref_gpus=1,  kimg=10000, mb=64, mbstd=32, fmaps=1,   lrate=0.0002, gamma=0.01, ema=500, ramp=0.05, map=2),
-        'sngan':     dict(ref_gpus=1,  kimg=10000, mb=64, mbstd=32, fmaps=1,   lrate=0.0002, gamma=0.01, ema=500, ramp=0.05, map=2),
+        'sngan':     dict(ref_gpus=1,  kimg=100000, mb=64, mbstd=32, fmaps=1,   lrate=0.0002, gamma=0.01, ema=500, ramp=0.05, map=2),
     }
 
     assert cfg in cfg_specs
@@ -388,6 +388,7 @@ def setup_training_loop_kwargs(
             raise UserError('--workers must be at least 1')
         args.data_loader_kwargs.num_workers = workers
 
+    desc+=f'-{args.model_type}'
     desc+=gen_run_desc_from_config()
     if remark!=None:
         desc += f'-{remark}'
@@ -593,7 +594,7 @@ def train_cifar(tuner_config, ctx, outdir, dry_run, config_kwargs  ):
     args.run_dir = os.path.join(outdir, f'{cur_run_id:05d}-{run_desc}')
     assert not os.path.exists(args.run_dir)
 
-    remark=config_kwargs['remark']
+ 
     # Print options.
     print()
     print(f'Training options:  ')
