@@ -186,23 +186,23 @@ def compute_feature_stats_for_dataset(opts, detector_url, detector_kwargs, rel_l
 
     # Try to lookup from cache.
     cache_file = None
-    # if opts.cache:
-    #     # Choose cache file name.
-    #     args = dict(dataset_kwargs=opts.dataset_kwargs, detector_url=detector_url, detector_kwargs=detector_kwargs, stats_kwargs=stats_kwargs)
-    #     md5 = hashlib.md5(repr(sorted(args.items())).encode('utf-8'))
-    #     cache_tag = f'{dataset.name}-{get_feature_detector_name(detector_url)}-{md5.hexdigest()}'
-    #     cache_file = dnnlib.make_cache_dir_path('gan-metrics', cache_tag + '.pkl')
+    if opts.cache:
+        # Choose cache file name.
+        args = dict(dataset_kwargs=opts.dataset_kwargs, detector_url=detector_url, detector_kwargs=detector_kwargs, stats_kwargs=stats_kwargs)
+        md5 = hashlib.md5(repr(sorted(args.items())).encode('utf-8'))
+        cache_tag = f'{dataset.name}-{get_feature_detector_name(detector_url)}-{md5.hexdigest()}'
+        cache_file = dnnlib.make_cache_dir_path('gan-metrics', cache_tag + '.pkl')
 
-    #     # Check if the file exists (all processes must agree).
-    #     flag = os.path.isfile(cache_file) if opts.rank == 0 else False
-    #     if opts.num_gpus > 1:
-    #         flag = torch.as_tensor(flag, dtype=torch.float32, device=opts.device)
-    #         torch.distributed.broadcast(tensor=flag, src=0)
-    #         flag = (float(flag.cpu()) != 0)
+        # Check if the file exists (all processes must agree).
+        flag = os.path.isfile(cache_file) if opts.rank == 0 else False
+        if opts.num_gpus > 1:
+            flag = torch.as_tensor(flag, dtype=torch.float32, device=opts.device)
+            torch.distributed.broadcast(tensor=flag, src=0)
+            flag = (float(flag.cpu()) != 0)
 
-    #     # Load.
-    #     if flag:
-    #         return FeatureStats.load(cache_file)
+        # Load.
+        if flag:
+            return FeatureStats.load(cache_file)
 
     # Initialize.
     num_items = len(dataset)
