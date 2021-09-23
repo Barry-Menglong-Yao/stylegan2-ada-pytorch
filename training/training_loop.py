@@ -322,7 +322,7 @@ def construct_networks(rank,training_set,G_kwargs,D_kwargs,VAE_kwargs,device,mod
     D=D.to(device)
 
     if not config.is_separate_update_for_vae:
-        vae_gan=dnnlib.util.construct_class_by_name(D,G.mapping,G.synthesis,config.is_mapping,class_name=model_attribute.model_name).train()
+        vae_gan=dnnlib.util.construct_class_by_name(D,G.mapping,G.synthesis,G,config.is_mapping,class_name=model_attribute.model_name).train()
         if model_attribute.gan_type !=GanType.SNGAN:
             vae_gan=vae_gan.requires_grad_(False) 
         vae_gan=vae_gan.to(device)
@@ -586,7 +586,8 @@ def save_network(cur_tick,training_set_kwargs,G,D,G_ema,augment_pipe,done,networ
                 pickle.dump(snapshot_data, f)
     return snapshot_data,snapshot_pkl
 
-def evaluate_metrics(snapshot_data,snapshot_pkl,metrics,num_gpus,rank,device,training_set_kwargs,run_dir,stats_metrics,image_snapshot_ticks,done,cur_tick,mode,reconstruct_loss_value):
+def evaluate_metrics(snapshot_data,snapshot_pkl,metrics,num_gpus,rank,device,training_set_kwargs,run_dir,stats_metrics,
+image_snapshot_ticks,done,cur_tick,mode,reconstruct_loss_value):
     if (snapshot_data is not None) and (len(metrics) > 0):
         if rank == 0:
             print('Evaluating metrics...')

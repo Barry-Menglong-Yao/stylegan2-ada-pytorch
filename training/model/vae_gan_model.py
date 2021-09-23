@@ -6,13 +6,14 @@ from torch_utils import persistence
 
 @persistence.persistent_class
 class VaeGan(torch.nn.Module):
-    def __init__(self, discriminator ,G_mapping ,G_synthesis,is_mapping  ):
+    def __init__(self, discriminator ,G_mapping ,G_synthesis,G,is_mapping  ):
         super().__init__()
         self.D=discriminator
    
         self.G_synthesis=G_synthesis
         self.G_mapping=G_mapping
         self.is_mapping=is_mapping
+  
 
  
     def forward(self, real_img, real_c,  sync  ):
@@ -42,7 +43,18 @@ class VaeGan(torch.nn.Module):
         return VAE_loss,loss_Emain_reconstruct
 
 
-    
-
+@persistence.persistent_class
+class VaeGanFineTune(VaeGan):
+    def __init__(self, discriminator ,G_mapping ,G_synthesis,G,is_mapping  ):
+        super().__init__(discriminator ,G_mapping ,G_synthesis,G,is_mapping)
  
+        self.G=G
+         
+    def forward(self, real_img, real_c,  sync  ):
+
+        _,gen_z_of_real_img ,mu,log_var  = self.D(real_img, real_c,"encoder")
     
+        return  self.G(gen_z_of_real_img,real_c),  mu, log_var
+
+      
+ 

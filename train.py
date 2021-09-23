@@ -9,6 +9,7 @@
 """Train a GAN using the techniques described in the paper
 "Training Generative Adversarial Networks with Limited Data"."""
 
+from tune_vae import fine_tune
 from dnnlib.enums import ModelAttribute
 from metrics.metric_utils import reconstruct
 import os
@@ -33,7 +34,231 @@ import numpy as np
 
 class UserError(Exception):
     pass
+#----------------------------------------------------------------------------
 
+class CommaSeparatedList(click.ParamType):
+    name = 'list'
+
+    def convert(self, value, param, ctx):
+        _ = param, ctx
+        if value is None or value.lower() == 'none' or value == '':
+            return []
+        return value.split(',')
+
+#----------------------------------------------------------------------------
+
+@click.command()
+@click.pass_context
+
+# General options.
+@click.option('--outdir', help='Where to save the results', required=True, metavar='DIR')
+@click.option('--gpus', help='Number of GPUs to use [default: 1]', type=int, metavar='INT')
+@click.option('--snap', help='Snapshot interval [default: 50 ticks]', type=int, metavar='INT')
+@click.option('--metrics', help='Comma-separated list or "none" [default: fid50k_full]', type=CommaSeparatedList())
+@click.option('--seed', help='Random seed [default: 0]', type=int, metavar='INT')
+@click.option('-n', '--dry-run', help='Print training options and exit', is_flag=True)
+
+# Dataset.
+@click.option('--data', help='Training data (directory or zip)', metavar='PATH', required=True)
+@click.option('--cond', help='Train conditional model based on dataset labels [default: false]', type=bool, metavar='BOOL')
+@click.option('--subset', help='Train with only N images [default: all]', type=int, metavar='INT')
+@click.option('--mirror', help='Enable dataset x-flips [default: false]', type=bool, metavar='BOOL')
+
+# Base config.
+@click.option('--cfg', help='Base config [default: auto]', type=click.Choice(['auto', 'stylegan2', 'paper256', 'paper512', 'paper1024', 'cifar','dcgan','sngan']))
+@click.option('--gamma', help='Override R1 gamma', type=float)
+@click.option('--kimg', help='Override training duration', type=int, metavar='INT')
+@click.option('--batch', help='Override batch size', type=int, metavar='INT')
+
+# Discriminator augmentation.
+@click.option('--aug', help='Augmentation mode [default: ada]', type=click.Choice(['noaug', 'ada', 'fixed']))
+@click.option('--p', help='Augmentation probability for --aug=fixed', type=float)
+@click.option('--target', help='ADA target value for --aug=ada', type=float)
+@click.option('--augpipe', help='Augmentation pipeline [default: bgc]', type=click.Choice(['blit', 'geom', 'color', 'filter', 'noise', 'cutout', 'bg', 'bgc', 'bgcf', 'bgcfn', 'bgcfnc']))
+
+# Transfer learning.
+@click.option('--resume', help='Resume training [default: noresume]', metavar='PKL')
+@click.option('--freezed', help='Freeze-D [default: 0 layers]', type=int, metavar='INT')
+
+# Performance options.
+@click.option('--fp32', help='Disable mixed-precision training', type=bool, metavar='BOOL')
+@click.option('--nhwc', help='Use NHWC memory format with FP16', type=bool, metavar='BOOL')
+@click.option('--nobench', help='Disable cuDNN benchmarking', type=bool, metavar='BOOL')
+@click.option('--allow-tf32', help='Allow PyTorch to use TF32 internally', type=bool, metavar='BOOL')
+@click.option('--workers', help='Override number of DataLoader workers', type=int, metavar='INT')
+
+#vae
+@click.option('--vae_alpha_g', help='alpha for vae loss', type=float)
+@click.option('--vae_alpha_d', help='alpha for vae loss', type=float)
+@click.option('--vae_beta', help='beta for vae loss', type=float)
+@click.option('--mode', help=' ', type=click.Choice(['test', 'train','hyper_search','debug','fine_tune' ]))
+@click.option('--sample_num', help=' ', type=int, metavar='INT')
+@click.option('--remark', help=' ', type=str)
+@click.option('--model_type', help=' ', type=click.Choice(['SNGAN','SNGAN_VAE','GAN_VAE_fine_tune', 'autoencoder_by_GAN','VAE_by_GAN',  'GAN_VAE','VAE', 'DCGAN_VAE', 'GAN_VAE_DEMO']))
+@click.option('--epoch', help='Random seed [default: 0]', type=int,default=-1, metavar='INT')
+# @click.option('--network_pkl', help='Resume training [default: noresume]', metavar='PKL',default="https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/cifar10.pkl")
+@click.option('--network_pkl', help='Resume training [default: noresume]', metavar='PKL',default="https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/paper-fig11b-cifar10/cifar10u-cifar-ada-best-fid.pkl")
+@click.option('--evaluate_interval', help='Random seed [default: 0]', type=int,default=15, metavar='INT')
+@click.option('--fine_tune_module', help=' ', type=str,default="d_and_e")
+
+def main(ctx, outdir, dry_run, **config_kwargs):
+    """Train a GAN using the techniques described in the paper
+    "Training Generative Adversarial Networks with Limited Data".
+
+    Examples:
+
+    \b
+    # Train with custom dataset using 1 GPU.
+    python train.py --outdir=~/training-runs --data=~/mydataset.zip --gpus=1
+
+    \b
+    # Train class-conditional CIFAR-10 using 2 GPUs.
+    python train.py --outdir=~/training-runs --data=~/datasets/cifar10.zip \\
+        --gpus=2 --cfg=cifar --cond=1
+
+    \b
+    # Transfer learn MetFaces from FFHQ using 4 GPUs.
+    python train.py --outdir=~/training-runs --data=~/datasets/metfaces.zip \\
+        --gpus=4 --cfg=paper1024 --mirror=1 --resume=ffhq1024 --snap=10
+
+    \b
+    # Reproduce original StyleGAN2 config F.
+    python train.py --outdir=~/training-runs --data=~/datasets/ffhq.zip \\
+        --gpus=8 --cfg=stylegan2 --mirror=1 --aug=noaug
+
+    \b
+    Base configs (--cfg):
+      auto       Automatically select reasonable defaults based on resolution
+                 and GPU count. Good starting point for new datasets.
+      stylegan2  Reproduce results for StyleGAN2 config F at 1024x1024.
+      paper256   Reproduce results for FFHQ and LSUN Cat at 256x256.
+      paper512   Reproduce results for BreCaHAD and AFHQ at 512x512.
+      paper1024  Reproduce results for MetFaces at 1024x1024.
+      cifar      Reproduce results for CIFAR-10 at 32x32.
+
+    \b
+    Transfer learning source networks (--resume):
+      ffhq256        FFHQ trained at 256x256 resolution.
+      ffhq512        FFHQ trained at 512x512 resolution.
+      ffhq1024       FFHQ trained at 1024x1024 resolution.
+      celebahq256    CelebA-HQ trained at 256x256 resolution.
+      lsundog256     LSUN Dog trained at 256x256 resolution.
+      <PATH or URL>  Custom network pickle.
+    """
+    if config_kwargs['mode'] is  None or config_kwargs['mode']  !="hyper_search": 
+        train_cifar(None, ctx, outdir, dry_run, config_kwargs  )
+    else:
+
+        config = {
+            "alpha":  tune.loguniform(5e-1, 200 ),
+            "beta":   tune.loguniform(1e-3, 1) 
+        }
+        gpus_per_trial = 0.5
+        num_samples=10
+        max_num_epochs=6
+        metric_name= "fid50k_full_reconstruct"
+        cpus_per_trial=4
+
+        scheduler = ASHAScheduler(
+            metric= metric_name,
+            mode="min",
+            max_t=max_num_epochs,
+            grace_period=2,
+            reduction_factor=2)         
+        reporter = CLIReporter(
+            # parameter_columns=["l1", "l2", "lr", "batch_size"],
+            metric_columns=[ "reconstruct_loss", "fid50k_full" , "fid50k_full_reconstruct", "training_iteration"])                   
+        result = tune.run(
+            partial(train_cifar ,ctx=ctx,outdir=outdir,dry_run=dry_run,config_kwargs=config_kwargs),
+            resources_per_trial={"cpu": cpus_per_trial, "gpu": gpus_per_trial},
+            config=config,
+            num_samples=num_samples,
+            scheduler=scheduler,
+            progress_reporter=reporter,
+            checkpoint_at_end=False) 
+            
+
+        best_trial = result.get_best_trial(metric_name, "min", "last")
+        print("Best trial config: {}".format(best_trial.config))
+        print("Best trial final generation fid: {}".format(
+            best_trial.last_result[ "fid50k_full"]))
+        print("Best trial final reconstrction fid: {}".format(
+            best_trial.last_result["fid50k_full_reconstruct"]))
+        print("Best trial final reconstruct_loss: {}".format(
+            best_trial.last_result["reconstruct_loss"]))
+
+
+def update_config(config_kwargs,config):
+    if config!=None:
+        config_kwargs['vae_alpha_d']=config["alpha"]
+        config_kwargs['vae_alpha_g']=config["alpha"]
+        config_kwargs['vae_beta']=config["beta"]
+
+def train_cifar(tuner_config, ctx, outdir, dry_run, config_kwargs  ):
+    dnnlib.util.Logger(should_flush=True)
+
+    update_config(config_kwargs,tuner_config)
+    # Setup training options.
+    try:
+        run_desc, args = setup_training_loop_kwargs(**config_kwargs)
+    except UserError as err:
+        ctx.fail(err)
+
+
+    # Pick output directory.
+    prev_run_dirs = []
+    if os.path.isdir(outdir):
+        prev_run_dirs = [x for x in os.listdir(outdir) if os.path.isdir(os.path.join(outdir, x))]
+    prev_run_ids = [re.match(r'^\d+', x) for x in prev_run_dirs]
+    prev_run_ids = [int(x.group()) for x in prev_run_ids if x is not None]
+    cur_run_id = max(prev_run_ids, default=-1) + 1
+    args.run_dir = os.path.join(outdir, f'{cur_run_id:05d}-{run_desc}')
+    assert not os.path.exists(args.run_dir)
+
+ 
+    # Print options.
+    print()
+    print(f'Training options:  ')
+     
+    print(json.dumps(args, indent=2))
+    print()
+    print(f'Output directory:   {args.run_dir}')
+    print(f'Training data:      {args.training_set_kwargs.path}')
+    print(f'Training duration:  {args.total_kimg} kimg')
+    print(f'Number of GPUs:     {args.num_gpus}')
+    print(f'Number of images:   {args.training_set_kwargs.max_size}')
+    print(f'Image resolution:   {args.training_set_kwargs.resolution}')
+    print(f'Conditional model:  {args.training_set_kwargs.use_labels}')
+    print(f'Dataset x-flips:    {args.training_set_kwargs.xflip}')
+    print()
+
+    # Dry run?
+    if dry_run:
+        print('Dry run; exiting.')
+        return
+
+    # Create output directory.
+    print('Creating output directory...')
+    os.makedirs(args.run_dir)
+    with open(os.path.join(args.run_dir, 'training_options.json'), 'wt') as f:
+        json.dump(args, f, indent=2)
+    with open(os.path.join(args.run_dir, 'inner_config.json'), 'wt') as f:
+        json.dump(config, f, indent=2)
+
+    # Launch processes.
+    print('Launching processes...')
+    
+    if args.mode!="fine_tune":
+        torch.multiprocessing.set_start_method('spawn')
+        with tempfile.TemporaryDirectory() as temp_dir:
+            if args.num_gpus == 1:
+                subprocess_fn(rank=0, args=args, temp_dir=temp_dir)
+            else:
+                torch.multiprocessing.spawn(fn=subprocess_fn, args=(args, temp_dir), nprocs=args.num_gpus)
+    else:
+        fine_tune(args)
+
+    
 #----------------------------------------------------------------------------
 
 def setup_training_loop_kwargs(
@@ -78,13 +303,19 @@ def setup_training_loop_kwargs(
     mode=None,
     remark=None,
     model_type=None,
+    epoch=None,
+    network_pkl=None, 
+    evaluate_interval=None, 
+    fine_tune_module=None, 
 ):
     args = dnnlib.EasyDict()
 
     # ------------------------------------------
     # General options: gpus, snap, metrics, seed
     # ------------------------------------------
-
+    args.network_pkl=network_pkl
+    args.evaluate_interval=evaluate_interval
+    args.fine_tune_module=fine_tune_module
     if gpus is None:
         gpus = 1
     assert isinstance(gpus, int)
@@ -392,6 +623,9 @@ def setup_training_loop_kwargs(
     desc+=gen_run_desc_from_config()
     if remark!=None:
         desc += f'-{remark}'
+    args.config='training/fine_tune_vae/configs/vae.yaml'
+    args.VAE_kwargs= dnnlib.EasyDict(vae_alpha_d=vae_alpha_d, vae_beta=vae_beta) 
+  
     return desc, args
 
 #----------------------------------------------------------------------------
@@ -419,223 +653,9 @@ def subprocess_fn(rank, args, temp_dir):
     # Execute training loop.
     training_loop.training_loop(rank=rank, **args)
 
-#----------------------------------------------------------------------------
-
-class CommaSeparatedList(click.ParamType):
-    name = 'list'
-
-    def convert(self, value, param, ctx):
-        _ = param, ctx
-        if value is None or value.lower() == 'none' or value == '':
-            return []
-        return value.split(',')
 
 #----------------------------------------------------------------------------
 
-@click.command()
-@click.pass_context
-
-# General options.
-@click.option('--outdir', help='Where to save the results', required=True, metavar='DIR')
-@click.option('--gpus', help='Number of GPUs to use [default: 1]', type=int, metavar='INT')
-@click.option('--snap', help='Snapshot interval [default: 50 ticks]', type=int, metavar='INT')
-@click.option('--metrics', help='Comma-separated list or "none" [default: fid50k_full]', type=CommaSeparatedList())
-@click.option('--seed', help='Random seed [default: 0]', type=int, metavar='INT')
-@click.option('-n', '--dry-run', help='Print training options and exit', is_flag=True)
-
-# Dataset.
-@click.option('--data', help='Training data (directory or zip)', metavar='PATH', required=True)
-@click.option('--cond', help='Train conditional model based on dataset labels [default: false]', type=bool, metavar='BOOL')
-@click.option('--subset', help='Train with only N images [default: all]', type=int, metavar='INT')
-@click.option('--mirror', help='Enable dataset x-flips [default: false]', type=bool, metavar='BOOL')
-
-# Base config.
-@click.option('--cfg', help='Base config [default: auto]', type=click.Choice(['auto', 'stylegan2', 'paper256', 'paper512', 'paper1024', 'cifar','dcgan','sngan']))
-@click.option('--gamma', help='Override R1 gamma', type=float)
-@click.option('--kimg', help='Override training duration', type=int, metavar='INT')
-@click.option('--batch', help='Override batch size', type=int, metavar='INT')
-
-# Discriminator augmentation.
-@click.option('--aug', help='Augmentation mode [default: ada]', type=click.Choice(['noaug', 'ada', 'fixed']))
-@click.option('--p', help='Augmentation probability for --aug=fixed', type=float)
-@click.option('--target', help='ADA target value for --aug=ada', type=float)
-@click.option('--augpipe', help='Augmentation pipeline [default: bgc]', type=click.Choice(['blit', 'geom', 'color', 'filter', 'noise', 'cutout', 'bg', 'bgc', 'bgcf', 'bgcfn', 'bgcfnc']))
-
-# Transfer learning.
-@click.option('--resume', help='Resume training [default: noresume]', metavar='PKL')
-@click.option('--freezed', help='Freeze-D [default: 0 layers]', type=int, metavar='INT')
-
-# Performance options.
-@click.option('--fp32', help='Disable mixed-precision training', type=bool, metavar='BOOL')
-@click.option('--nhwc', help='Use NHWC memory format with FP16', type=bool, metavar='BOOL')
-@click.option('--nobench', help='Disable cuDNN benchmarking', type=bool, metavar='BOOL')
-@click.option('--allow-tf32', help='Allow PyTorch to use TF32 internally', type=bool, metavar='BOOL')
-@click.option('--workers', help='Override number of DataLoader workers', type=int, metavar='INT')
-
-#vae
-@click.option('--vae_alpha_g', help='alpha for vae loss', type=float)
-@click.option('--vae_alpha_d', help='alpha for vae loss', type=float)
-@click.option('--vae_beta', help='beta for vae loss', type=float)
-@click.option('--mode', help=' ', type=click.Choice(['test', 'train','hyper_search','debug' ]))
-@click.option('--sample_num', help=' ', type=int, metavar='INT')
-@click.option('--remark', help=' ', type=str)
-@click.option('--model_type', help=' ', type=click.Choice(['SNGAN','SNGAN_VAE', 'autoencoder_by_GAN','VAE_by_GAN',  'GAN_VAE','VAE', 'DCGAN_VAE', 'GAN_VAE_DEMO']))
-def main(ctx, outdir, dry_run, **config_kwargs):
-    """Train a GAN using the techniques described in the paper
-    "Training Generative Adversarial Networks with Limited Data".
-
-    Examples:
-
-    \b
-    # Train with custom dataset using 1 GPU.
-    python train.py --outdir=~/training-runs --data=~/mydataset.zip --gpus=1
-
-    \b
-    # Train class-conditional CIFAR-10 using 2 GPUs.
-    python train.py --outdir=~/training-runs --data=~/datasets/cifar10.zip \\
-        --gpus=2 --cfg=cifar --cond=1
-
-    \b
-    # Transfer learn MetFaces from FFHQ using 4 GPUs.
-    python train.py --outdir=~/training-runs --data=~/datasets/metfaces.zip \\
-        --gpus=4 --cfg=paper1024 --mirror=1 --resume=ffhq1024 --snap=10
-
-    \b
-    # Reproduce original StyleGAN2 config F.
-    python train.py --outdir=~/training-runs --data=~/datasets/ffhq.zip \\
-        --gpus=8 --cfg=stylegan2 --mirror=1 --aug=noaug
-
-    \b
-    Base configs (--cfg):
-      auto       Automatically select reasonable defaults based on resolution
-                 and GPU count. Good starting point for new datasets.
-      stylegan2  Reproduce results for StyleGAN2 config F at 1024x1024.
-      paper256   Reproduce results for FFHQ and LSUN Cat at 256x256.
-      paper512   Reproduce results for BreCaHAD and AFHQ at 512x512.
-      paper1024  Reproduce results for MetFaces at 1024x1024.
-      cifar      Reproduce results for CIFAR-10 at 32x32.
-
-    \b
-    Transfer learning source networks (--resume):
-      ffhq256        FFHQ trained at 256x256 resolution.
-      ffhq512        FFHQ trained at 512x512 resolution.
-      ffhq1024       FFHQ trained at 1024x1024 resolution.
-      celebahq256    CelebA-HQ trained at 256x256 resolution.
-      lsundog256     LSUN Dog trained at 256x256 resolution.
-      <PATH or URL>  Custom network pickle.
-    """
-    if config_kwargs['mode'] is  None or config_kwargs['mode']  !="hyper_search": 
-        train_cifar(None, ctx, outdir, dry_run, config_kwargs  )
-    else:
-
-        config = {
-            "alpha":  tune.loguniform(5e-1, 200 ),
-            "beta":   tune.loguniform(1e-3, 1) 
-        }
-        gpus_per_trial = 0.5
-        num_samples=10
-        max_num_epochs=6
-        metric_name= "fid50k_full_reconstruct"
-        cpus_per_trial=4
-
-        scheduler = ASHAScheduler(
-            metric= metric_name,
-            mode="min",
-            max_t=max_num_epochs,
-            grace_period=2,
-            reduction_factor=2)         
-        reporter = CLIReporter(
-            # parameter_columns=["l1", "l2", "lr", "batch_size"],
-            metric_columns=[ "reconstruct_loss", "fid50k_full" , "fid50k_full_reconstruct", "training_iteration"])                   
-        result = tune.run(
-            partial(train_cifar ,ctx=ctx,outdir=outdir,dry_run=dry_run,config_kwargs=config_kwargs),
-            resources_per_trial={"cpu": cpus_per_trial, "gpu": gpus_per_trial},
-            config=config,
-            num_samples=num_samples,
-            scheduler=scheduler,
-            progress_reporter=reporter,
-            checkpoint_at_end=False) 
-            
-
-        best_trial = result.get_best_trial(metric_name, "min", "last")
-        print("Best trial config: {}".format(best_trial.config))
-        print("Best trial final generation fid: {}".format(
-            best_trial.last_result[ "fid50k_full"]))
-        print("Best trial final reconstrction fid: {}".format(
-            best_trial.last_result["fid50k_full_reconstruct"]))
-        print("Best trial final reconstruct_loss: {}".format(
-            best_trial.last_result["reconstruct_loss"]))
-
-
-def update_config(config_kwargs,config):
-    if config!=None:
-        config_kwargs['vae_alpha_d']=config["alpha"]
-        config_kwargs['vae_alpha_g']=config["alpha"]
-        config_kwargs['vae_beta']=config["beta"]
-
-def train_cifar(tuner_config, ctx, outdir, dry_run, config_kwargs  ):
-    dnnlib.util.Logger(should_flush=True)
-
-    update_config(config_kwargs,tuner_config)
-    # Setup training options.
-    try:
-        run_desc, args = setup_training_loop_kwargs(**config_kwargs)
-    except UserError as err:
-        ctx.fail(err)
-
-
-    # Pick output directory.
-    prev_run_dirs = []
-    if os.path.isdir(outdir):
-        prev_run_dirs = [x for x in os.listdir(outdir) if os.path.isdir(os.path.join(outdir, x))]
-    prev_run_ids = [re.match(r'^\d+', x) for x in prev_run_dirs]
-    prev_run_ids = [int(x.group()) for x in prev_run_ids if x is not None]
-    cur_run_id = max(prev_run_ids, default=-1) + 1
-    args.run_dir = os.path.join(outdir, f'{cur_run_id:05d}-{run_desc}')
-    assert not os.path.exists(args.run_dir)
-
- 
-    # Print options.
-    print()
-    print(f'Training options:  ')
-     
-    print(json.dumps(args, indent=2))
-    print()
-    print(f'Output directory:   {args.run_dir}')
-    print(f'Training data:      {args.training_set_kwargs.path}')
-    print(f'Training duration:  {args.total_kimg} kimg')
-    print(f'Number of GPUs:     {args.num_gpus}')
-    print(f'Number of images:   {args.training_set_kwargs.max_size}')
-    print(f'Image resolution:   {args.training_set_kwargs.resolution}')
-    print(f'Conditional model:  {args.training_set_kwargs.use_labels}')
-    print(f'Dataset x-flips:    {args.training_set_kwargs.xflip}')
-    print()
-
-    # Dry run?
-    if dry_run:
-        print('Dry run; exiting.')
-        return
-
-    # Create output directory.
-    print('Creating output directory...')
-    os.makedirs(args.run_dir)
-    with open(os.path.join(args.run_dir, 'training_options.json'), 'wt') as f:
-        json.dump(args, f, indent=2)
-    with open(os.path.join(args.run_dir, 'inner_config.json'), 'wt') as f:
-        json.dump(config, f, indent=2)
-
-    # Launch processes.
-    print('Launching processes...')
-    
-    torch.multiprocessing.set_start_method('spawn')
-    with tempfile.TemporaryDirectory() as temp_dir:
-        if args.num_gpus == 1:
-            subprocess_fn(rank=0, args=args, temp_dir=temp_dir)
-        else:
-            torch.multiprocessing.spawn(fn=subprocess_fn, args=(args, temp_dir), nprocs=args.num_gpus)
-
-    
-#----------------------------------------------------------------------------
 
 if __name__ == "__main__":
     

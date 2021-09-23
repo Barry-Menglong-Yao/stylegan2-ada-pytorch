@@ -1,0 +1,22 @@
+model_params:
+  name: 'VaeGan'
+  in_channels: 3
+  latent_dim: 512
+
+exp_params:
+  dataset: cifar10 #
+  data_path: "../../../data/cv/"
+  img_size: 32
+  batch_size: 64 # Better to have a square number
+  LR: 0.001
+  weight_decay: 0.0
+  scheduler_gamma: 0.95
+
+trainer_params:
+  gpus: 1
+  max_epochs: 2000
+
+logging_params:
+  save_dir: "training/fine_tune_vae/logs/"
+  name: "VanillaVAE"
+  manual_seed: 1265
