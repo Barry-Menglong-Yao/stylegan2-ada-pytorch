@@ -49,10 +49,11 @@ class VAEXperiment(pl.LightningModule):
         self.curr_device = real_img.device
         real_img=convert_256_to_1(real_img, self.params['dataset']  )
         reconstructed_img, mu,log_var, = self.forward(real_img )
-        vae_loss,recons_loss  = self.model.vae_loss(reconstructed_img,real_img,mu,log_var,
-                                               self.args.VAE_kwargs.vae_beta,self.args.VAE_kwargs.vae_alpha_d)
-        loss={'loss': vae_loss , 'Reconstruction_Loss':recons_loss    }
-        loss_log={'loss': vae_loss.item(), 'Reconstruction_Loss':recons_loss.item() }
+        vae_loss,recons_loss,kld_loss  = self.model.vae_loss(reconstructed_img,real_img,mu,log_var,
+                                               self.args.VAE_kwargs.vae_beta,self.args.VAE_kwargs.vae_alpha_d,
+                                              kld_weight = self.params['batch_size']/ self.num_train_imgs)
+        loss={'loss': vae_loss , 'Reconstruction_Loss':recons_loss , 'KLD':-kld_loss }
+        loss_log={'loss': vae_loss.item(), 'Reconstruction_Loss':recons_loss.item(), 'KLD':-kld_loss.item()}
         self.logger.experiment.log(loss_log)
 
         return loss
@@ -81,9 +82,10 @@ class VAEXperiment(pl.LightningModule):
         self.curr_device = real_img.device
         real_img=convert_256_to_1(real_img, self.params['dataset']  )
         reconstructed_img,mu,log_var = self.forward(real_img )
-        vae_loss,recons_loss   = self.model.vae_loss(reconstructed_img,real_img,mu,log_var,
-                                               self.args.VAE_kwargs.vae_beta,self.args.VAE_kwargs.vae_alpha_d)
-        loss={'loss': vae_loss , 'Reconstruction_Loss':recons_loss  }
+        vae_loss,recons_loss ,kld_loss  = self.model.vae_loss(reconstructed_img,real_img,mu,log_var,
+                                               self.args.VAE_kwargs.vae_beta,self.args.VAE_kwargs.vae_alpha_d,
+                                            kld_weight = self.params['batch_size']/ self.num_val_imgs)
+        loss={'loss': vae_loss , 'Reconstruction_Loss':recons_loss , 'KLD':-kld_loss }
  
      
         return loss
@@ -125,7 +127,7 @@ class VAEXperiment(pl.LightningModule):
         snapshot_data,snapshot_pkl=training_loop.save_network(self.current_epoch,args.training_set_kwargs,G,D,G_ema,None,done,
         args.network_snapshot_ticks,rank,args.num_gpus,args.run_dir,cur_nimg)
          
-        stats_metrics=[]
+        stats_metrics={}
         # Evaluate metrics.  
         training_loop.evaluate_metrics(snapshot_data,snapshot_pkl,args.metrics,args.num_gpus,rank,device,args.training_set_kwargs,args.run_dir,
         stats_metrics,args.image_snapshot_ticks,done,self.current_epoch,args.mode,0)

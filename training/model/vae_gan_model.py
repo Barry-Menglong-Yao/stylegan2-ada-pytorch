@@ -2,7 +2,7 @@ from dnnlib import config
 import torch
 from torch_utils import misc
 from torch_utils import persistence
-
+from torch.nn import functional as F
 
 @persistence.persistent_class
 class VaeGan(torch.nn.Module):
@@ -35,7 +35,7 @@ class VaeGan(torch.nn.Module):
         loss_Emain_reconstruct=torch.mean(loss_Emain_reconstruct,dim=1)
         VAE_loss=loss_Emain_reconstruct.mul(vae_alpha_d)
             
-        kld_loss = -0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1)
+        kld_loss = -0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1) 
         kld_loss=kld_loss.mul(32/50000).mul( vae_beta)
         VAE_loss += kld_loss 
         VAE_loss=torch.unsqueeze(VAE_loss, 1)
@@ -55,6 +55,17 @@ class VaeGanFineTune(VaeGan):
         _,gen_z_of_real_img ,mu,log_var  = self.D(real_img, real_c,"encoder")
     
         return  self.G(gen_z_of_real_img,real_c),  mu, log_var
+
+    def vae_loss(self, reconstructed_img, real_img,mu,log_var,vae_beta,vae_alpha_d,kld_weight):
+         
+
+        recons_loss =F.mse_loss(reconstructed_img, real_img)
+
+
+        kld_loss = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1), dim = 0)
+
+        loss = recons_loss*vae_alpha_d + kld_weight * kld_loss*vae_beta
+        return  loss,  recons_loss,  -kld_loss  
 
       
  

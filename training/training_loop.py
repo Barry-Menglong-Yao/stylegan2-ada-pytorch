@@ -139,7 +139,15 @@ def training_loop(
     VAE_kwargs={} ,
     remark=None,
     mode=None,
-    model_type="GAN_VAE"
+    model_type="GAN_VAE",
+ 
+    epoch=None,
+    network_pkl=None, 
+    evaluate_interval=None, 
+    fine_tune_module=None, 
+    verbose=False,
+    config=None,
+    freeze_type=None
 ):
     model_attribute=ModelAttribute[model_type]
     # Initialize.

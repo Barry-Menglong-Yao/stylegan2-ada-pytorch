@@ -463,7 +463,7 @@ class SynthesisNetwork(torch.nn.Module):
         block_ws = []
         with torch.autograd.profiler.record_function('split_ws'):
             misc.assert_shape(ws, [None, self.num_ws, self.w_dim])
-            ws = ws.to(torch.float32)
+            ws = ws.to(torch.float32) #32,8,512
             w_idx = 0
             for res in self.block_resolutions:
                 block = getattr(self, f'b{res}')
@@ -473,8 +473,9 @@ class SynthesisNetwork(torch.nn.Module):
         x = img = None
         for res, cur_ws in zip(self.block_resolutions, block_ws):
             block = getattr(self, f'b{res}')
-            x, img = block(x, img, cur_ws, **block_kwargs)
+            x, img = block(x, img, cur_ws, **block_kwargs) #32,512,4,4:32,3,4,4;32,512,8,8:32,3,8,8;32,512,16,16:32,3,16,16;32,512,32,32:32,3,32,32;
         return img
+
     def gan_g_loss(self, gen_logits):
         loss_Gmain = torch.nn.functional.softplus(-gen_logits) # -log(sigmoid(gen_logits))
          
@@ -508,7 +509,7 @@ class Generator(torch.nn.Module):
 
     def forward(self, z, c, truncation_psi=1, truncation_cutoff=None, **synthesis_kwargs):
         if self.is_mapping:
-            ws = self.mapping(z, c, truncation_psi=truncation_psi, truncation_cutoff=truncation_cutoff)
+            ws = self.mapping(z, c, truncation_psi=truncation_psi, truncation_cutoff=truncation_cutoff) #32,512->32,8,512
         else:
             ws =  z.unsqueeze(1).repeat([1, self.mapping.num_ws, 1])
         img = self.synthesis(ws, **synthesis_kwargs)
@@ -773,14 +774,15 @@ class Discriminator(torch.nn.Module):
 
     def forward(self, img, c,role, **block_kwargs):
         x = None
+        inject_info={}
         for res in self.block_resolutions:
             block = getattr(self, f'b{res}')
-            x, img = block(x, img, **block_kwargs)
+            x, img = block(x, img, **block_kwargs)#None:32,3,32,32;32,512,16,16:None;32,512,8,8:None;32,512,4,4:None
 
         cmap = None
         if self.c_dim > 0:
             cmap = self.mapping(None, c)
-        x,z,mu,log_var = self.b4(x, img, cmap)
+        x,z,mu,log_var = self.b4(x, img, cmap) #32,1
         # return x,z,mu,log_var
         if role=="discriminator":
             return x

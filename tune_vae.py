@@ -67,7 +67,7 @@ def load_vae_model(args,config):
         
         # load_model(config['model_params']['latent_dim'],"dcgan",model_attribute,0,0,config['exp_params']['batch_size'],None )
  
-        with dnnlib.util.open_url(args.network_pkl) as f:
+        with dnnlib.util.open_url(args.resume) as f:
             network=legacy.load_network_pkl(f) 
             G_ema = network['G_ema'].to(device) # type: ignore
             G =network['G'].to(device) # type: ignore

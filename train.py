@@ -77,8 +77,10 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--augpipe', help='Augmentation pipeline [default: bgc]', type=click.Choice(['blit', 'geom', 'color', 'filter', 'noise', 'cutout', 'bg', 'bgc', 'bgcf', 'bgcfn', 'bgcfnc']))
 
 # Transfer learning.
-@click.option('--resume', help='Resume training [default: noresume]', metavar='PKL')
+@click.option('--resume', help='Resume training [default: noresume]', metavar='PKL',default="https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/paper-fig11b-cifar10/cifar10u-cifar-ada-best-fid.pkl")
+ 
 @click.option('--freezed', help='Freeze-D [default: 0 layers]', type=int, metavar='INT')
+@click.option('--freeze_type', help='  [default: ]', type=click.Choice(["d_and_e","e", "g_d_e"   ]))
 
 # Performance options.
 @click.option('--fp32', help='Disable mixed-precision training', type=bool, metavar='BOOL')
@@ -94,13 +96,13 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--mode', help=' ', type=click.Choice(['test', 'train','hyper_search','debug','fine_tune' ]))
 @click.option('--sample_num', help=' ', type=int, metavar='INT')
 @click.option('--remark', help=' ', type=str)
-@click.option('--model_type', help=' ', type=click.Choice(['SNGAN','SNGAN_VAE','GAN_VAE_fine_tune', 'autoencoder_by_GAN','VAE_by_GAN',  'GAN_VAE','VAE', 'DCGAN_VAE', 'GAN_VAE_DEMO']))
+@click.option('--model_type', help=' ', type=click.Choice(['SNGAN','SNGAN_VAE','GAN_VAE_fine_tune','GAN_VAE_fine_tune_vae', 'autoencoder_by_GAN','VAE_by_GAN',  'GAN_VAE','VAE', 'DCGAN_VAE', 'GAN_VAE_DEMO']))
 @click.option('--epoch', help='Random seed [default: 0]', type=int,default=-1, metavar='INT')
 # @click.option('--network_pkl', help='Resume training [default: noresume]', metavar='PKL',default="https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/cifar10.pkl")
-@click.option('--network_pkl', help='Resume training [default: noresume]', metavar='PKL',default="https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/paper-fig11b-cifar10/cifar10u-cifar-ada-best-fid.pkl")
+
 @click.option('--evaluate_interval', help='Random seed [default: 0]', type=int,default=15, metavar='INT')
 @click.option('--fine_tune_module', help=' ', type=str,default="d_and_e")
-
+@click.option('--verbose', help='Print optional information', type=bool, default=True, metavar='BOOL', show_default=True)
 def main(ctx, outdir, dry_run, **config_kwargs):
     """Train a GAN using the techniques described in the paper
     "Training Generative Adversarial Networks with Limited Data".
@@ -307,9 +309,12 @@ def setup_training_loop_kwargs(
     network_pkl=None, 
     evaluate_interval=None, 
     fine_tune_module=None, 
+    verbose=False,
+    freeze_type=None,
 ):
     args = dnnlib.EasyDict()
-
+    args.verbose=verbose
+    args.freeze_type=freeze_type
     # ------------------------------------------
     # General options: gpus, snap, metrics, seed
     # ------------------------------------------
