@@ -25,6 +25,10 @@ class ModelAttribute(Enum):
     SNGAN_VAE= (DgmType.GAN_VAE, GanType.SNGAN,"training.model.sngan.GeneratorImpl","training.model.sngan.DiscriminatorImpl",128,"training.model.sngan.VaeGanImpl",5,"layer_in_y",["1","2","3","4"],False)
     UNet_SNGAN_VAE_single_ch= (DgmType.GAN_VAE, GanType.SNGAN,  "model.model.UnetGenerator","model.model.Discriminator",128,"model.model.VaeGan",5,"single_channel",["1","2","3","4"],False)
     GAN_VAE_fine_tune_vae = (DgmType.VAE, GanType.Stylegan2_ada,"training.model.networks.Generator","training.model.networks.Discriminator",512,"training.model.vae_gan_model.VaeGan",1,"layer_in_y",["1","2","3","4"],False)
+    GAN_VAE_fine_tune_vae_inject = (DgmType.VAE, GanType.Stylegan2_ada,"training.model.networks.Generator","training.model.networks.Discriminator",512,"training.model.vae_gan_model.VaeGan",1,"layer_in_y",["1","2","3","4"],False)
+    GAN_VAE_fine_tune_inject = (DgmType.GAN_VAE, GanType.Stylegan2_ada,"training.model.networks.Generator","training.model.networks.Discriminator",512,"training.model.vae_gan_model.VaeGan",1,"layer_in_y",["1","2","3","4"],False)
+    GAN_VAE_fine_tune_inject_single = (DgmType.GAN_VAE, GanType.Stylegan2_ada,"training.model.networks.Generator","training.model.networks.Discriminator",512,"training.model.vae_gan_model.VaeGan",1,"layer_in_y",["1","2","3","4"],False)
+    GAN_VAE_fine_tune_vae_inject_single = (DgmType.VAE, GanType.Stylegan2_ada,"training.model.networks.Generator","training.model.networks.Discriminator",512,"training.model.vae_gan_model.VaeGan",1,"layer_in_y",["1","2","3","4"],False)
     def __init__(self, dgm_type, gan_type,g_model_name,d_model_name,z_dim,model_name,disc_iters,inject_type,inject_layer_list,is_drop_out ):
         self.dgm_type = dgm_type       # in kilograms
         self.gan_type = gan_type   # in meters

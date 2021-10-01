@@ -242,7 +242,7 @@ def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel
 
     # Image generation func.
     def run_generator(z, c):
-        img = G(z=z, c=c, **opts.G_kwargs)
+        img = G(z=z, c=c,inject_info=None, **opts.G_kwargs)
         img = (img * 127.5 + 128).clamp(0, 255).to(torch.uint8)
         return img
 
@@ -319,8 +319,8 @@ def reconstruct(images ,   G,D,real_c,device=None, G_kwargs=None   ):
     if device!=None:
         images=images.to( device)
     processed_iamges=(images.to(torch.float32) / 127.5 - 1)
-    _,generated_z ,_,_ =  D(processed_iamges , real_c,"encoder" )
-    reconstructed_img = G(z=generated_z, c=real_c, **G_kwargs)
+    _,generated_z ,_,_,inject_info =  D(processed_iamges , real_c,"encoder" )
+    reconstructed_img = G(z=generated_z, c=real_c,inject_info=inject_info, **G_kwargs)
     reconstructed_img = (reconstructed_img * 127.5 + 128).clamp(0, 255).to(torch.uint8)
     return reconstructed_img
 

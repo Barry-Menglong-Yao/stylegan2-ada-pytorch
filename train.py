@@ -96,7 +96,7 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--mode', help=' ', type=click.Choice(['test', 'train','hyper_search','debug','fine_tune' ]))
 @click.option('--sample_num', help=' ', type=int, metavar='INT')
 @click.option('--remark', help=' ', type=str)
-@click.option('--model_type', help=' ', type=click.Choice(['SNGAN','SNGAN_VAE','GAN_VAE_fine_tune','GAN_VAE_fine_tune_vae', 'autoencoder_by_GAN','VAE_by_GAN',  'GAN_VAE','VAE', 'DCGAN_VAE', 'GAN_VAE_DEMO']))
+@click.option('--model_type', help=' ', type=str) #click.Choice(['SNGAN','SNGAN_VAE','GAN_VAE_fine_tune_inject','GAN_VAE_fine_tune_vae_inject','GAN_VAE_fine_tune','GAN_VAE_fine_tune_vae', 'autoencoder_by_GAN','VAE_by_GAN',  'GAN_VAE','VAE', 'DCGAN_VAE', 'GAN_VAE_DEMO'])
 @click.option('--epoch', help='Random seed [default: 0]', type=int,default=-1, metavar='INT')
 # @click.option('--network_pkl', help='Resume training [default: noresume]', metavar='PKL',default="https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/cifar10.pkl")
 

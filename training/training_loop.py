@@ -268,7 +268,7 @@ def training_loop(
 #----------------------------------------------------------------------------
 def save_image(rank,image_snapshot_ticks,done,cur_tick,G_ema,grid_z,grid_c,run_dir,cur_nimg,grid_size,real_images,D):
     if (rank == 0) and (image_snapshot_ticks is not None) and (done or cur_tick % image_snapshot_ticks == 0):
-        images = torch.cat([G_ema(z=z, c=c, noise_mode='const').detach().cpu() for z, c in zip(grid_z, grid_c)]).numpy()
+        images = torch.cat([G_ema(z=z, c=c,inject_info=None, noise_mode='const').detach().cpu() for z, c in zip(grid_z, grid_c)]).numpy()
         save_image_grid(images, os.path.join(run_dir, f'fakes{cur_nimg//1000:06d}.png'), drange=[-1,1], grid_size=grid_size)
 
         grid_reconstructed_images=reconstruct_grid(real_images,G_ema,D,grid_c)
@@ -356,7 +356,7 @@ def print_model(rank,batch_gpu,G,D,vae_gan,device):
     if rank == 0:
         z = torch.empty([batch_gpu, G.z_dim], device=device)
         c = torch.empty([batch_gpu, G.c_dim], device=device)
-        img = misc.print_module_summary(G, [z, c])
+        img = misc.print_module_summary(G, [z, c,None])
         misc.print_module_summary(D, [img, c,"discriminator"])
         if vae_gan!=None:
             misc.print_module_summary(vae_gan, [img, c,None])
@@ -457,7 +457,7 @@ def export_sample_images(training_set,rank,run_dir,G,device,batch_gpu,G_ema,samp
         grid_z = torch.randn([labels.shape[0], G.z_dim], device=device).split(batch_gpu)
         grid_c = torch.from_numpy(labels).to(device).split(batch_gpu)
         real_images =  torch.from_numpy(real_images).to(device).split(batch_gpu)
-        images = torch.cat([G_ema(z=z, c=c, noise_mode='const').cpu() for z, c in zip(grid_z, grid_c)]).numpy()
+        images = torch.cat([G_ema(z=z, c=c,inject_info=None, noise_mode='const').cpu() for z, c in zip(grid_z, grid_c)]).numpy()
         save_image_grid(images, os.path.join(run_dir, 'fakes_init.png'), drange=[-1,1], grid_size=grid_size)
     return grid_z,grid_c,grid_size,real_images
 

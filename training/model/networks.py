@@ -459,7 +459,7 @@ class SynthesisNetwork(torch.nn.Module):
                 self.num_ws += block.num_torgb
             setattr(self, f'b{res}', block)
 
-    def forward(self, ws, **block_kwargs):
+    def forward(self, ws,inject_info, **block_kwargs):
         block_ws = []
         with torch.autograd.profiler.record_function('split_ws'):
             misc.assert_shape(ws, [None, self.num_ws, self.w_dim])
@@ -474,6 +474,8 @@ class SynthesisNetwork(torch.nn.Module):
         for res, cur_ws in zip(self.block_resolutions, block_ws):
             block = getattr(self, f'b{res}')
             x, img = block(x, img, cur_ws, **block_kwargs) #32,512,4,4:32,3,4,4;32,512,8,8:32,3,8,8;32,512,16,16:32,3,16,16;32,512,32,32:32,3,32,32;
+            if inject_info!=None:
+                x=inject(inject_info,x,res)
         return img
 
     def gan_g_loss(self, gen_logits):
@@ -483,6 +485,11 @@ class SynthesisNetwork(torch.nn.Module):
         return loss_Gmain
 #----------------------------------------------------------------------------
 
+
+def inject(inject_info,x,res):
+    if res*2 in inject_info.keys():
+        x=x+inject_info[res*2]
+    return x
 @persistence.persistent_class
 class Generator(torch.nn.Module):
     def __init__(self,
@@ -507,12 +514,12 @@ class Generator(torch.nn.Module):
         self.mapping = MappingNetwork(z_dim=z_dim, c_dim=c_dim, w_dim=w_dim, num_ws=self.num_ws, **mapping_kwargs)
         self.is_mapping=is_mapping
 
-    def forward(self, z, c, truncation_psi=1, truncation_cutoff=None, **synthesis_kwargs):
+    def forward(self, z, c, inject_info,truncation_psi=1, truncation_cutoff=None, **synthesis_kwargs):
         if self.is_mapping:
             ws = self.mapping(z, c, truncation_psi=truncation_psi, truncation_cutoff=truncation_cutoff) #32,512->32,8,512
         else:
             ws =  z.unsqueeze(1).repeat([1, self.mapping.num_ws, 1])
-        img = self.synthesis(ws, **synthesis_kwargs)
+        img = self.synthesis(ws,inject_info, **synthesis_kwargs)
         return img
 
 #----------------------------------------------------------------------------
@@ -772,12 +779,47 @@ class Discriminator(torch.nn.Module):
         self.b4 = DiscriminatorEpilogue(channels_dict[4], cmap_dim=cmap_dim, resolution=4, **epilogue_kwargs, **common_kwargs)
         
 
+        inject_type="conv"
+        if inject_type=="conv":
+            self.inject_layer_8=nn.Sequential(
+            nn.Conv2d(512, 512,   3,   padding=(1,1)  ),
+            
+            nn.ReLU())
+            self.inject_layer_16=nn.Sequential(
+            nn.Conv2d(512, 512, 3,   padding=(1,1)),
+            
+            nn.ReLU()) 
+            self.inject_layer_32=nn.Sequential(
+            nn.Conv2d(512, 512,  3,   padding=(1,1)),
+            
+            nn.ReLU()) 
+             
+        elif inject_type=="single_channel":
+
+            self.inject_layer_8=nn.Sequential(
+            nn.Conv2d(512, 1,   3,   padding=(1,1)  ),
+            
+            nn.ReLU())
+            self.inject_layer_16=nn.Sequential(
+            nn.Conv2d(512, 1, 3,   padding=(1,1)),
+            
+            nn.ReLU()) 
+            self.inject_layer_32=nn.Sequential(
+            nn.Conv2d(512, 1,  3,   padding=(1,1)),
+            
+            nn.ReLU())  
+
     def forward(self, img, c,role, **block_kwargs):
         x = None
         inject_info={}
+ 
         for res in self.block_resolutions:
             block = getattr(self, f'b{res}')
             x, img = block(x, img, **block_kwargs)#None:32,3,32,32;32,512,16,16:None;32,512,8,8:None;32,512,4,4:None
+            inject_layer= getattr(self, f'inject_layer_{res}')
+            with torch.cuda.amp.autocast():
+                inject_info[res]=inject_layer(x)
+    
 
         cmap = None
         if self.c_dim > 0:
@@ -787,7 +829,7 @@ class Discriminator(torch.nn.Module):
         if role=="discriminator":
             return x
         else:
-            return x,z,mu,log_var
+            return x,z,mu,log_var,inject_info
     def gan_d_fake_img_loss(self, gen_logits):
         loss_Dgen = torch.nn.functional.softplus(gen_logits)   # -log(1 - sigmoid(gen_logits))
         loss_Dgen=loss_Dgen.mean()

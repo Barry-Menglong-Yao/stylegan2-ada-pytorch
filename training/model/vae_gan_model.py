@@ -18,14 +18,14 @@ class VaeGan(torch.nn.Module):
  
     def forward(self, real_img, real_c,  sync  ):
         with misc.ddp_sync(self.D , sync): 
-            real_logits,gen_z_of_real_img ,mu,log_var = self.D(real_img, real_c,"encoder")
+            real_logits,gen_z_of_real_img ,mu,log_var,inject_info = self.D(real_img, real_c,"encoder")
         if self.is_mapping:
             with misc.ddp_sync(self.G_mapping, sync):
                 ws = self.G_mapping(gen_z_of_real_img, real_c)
         else:
             ws=gen_z_of_real_img.unsqueeze(1).repeat([1, self.G_mapping.num_ws, 1])
         with misc.ddp_sync(self.G_synthesis, sync):
-            reconstructed_img = self.G_synthesis(ws)
+            reconstructed_img = self.G_synthesis(ws,inject_info)
         return  reconstructed_img,mu,log_var
 
     def vae_loss(self, reconstructed_img, real_img,mu,log_var,vae_beta,vae_alpha_d):
@@ -52,9 +52,9 @@ class VaeGanFineTune(VaeGan):
          
     def forward(self, real_img, real_c,  sync  ):
 
-        _,gen_z_of_real_img ,mu,log_var  = self.D(real_img, real_c,"encoder")
+        _,gen_z_of_real_img ,mu,log_var,inject_info  = self.D(real_img, real_c,"encoder")
     
-        return  self.G(gen_z_of_real_img,real_c),  mu, log_var
+        return  self.G(gen_z_of_real_img,real_c,inject_info),  mu, log_var
 
     def vae_loss(self, reconstructed_img, real_img,mu,log_var,vae_beta,vae_alpha_d,kld_weight):
          

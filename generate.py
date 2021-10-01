@@ -121,6 +121,9 @@ def generate_images(
         PIL.Image.fromarray(img[0].cpu().numpy(), 'RGB').save(f'{outdir}/seed{seed:04d}.png')
 
 
+
+
+
 #----------------------------------------------------------------------------
 
 if __name__ == "__main__":
