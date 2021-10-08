@@ -1,18 +1,20 @@
 from dnnlib import config
 import torch
+from dnnlib.enums import ModelAttribute
 from torch_utils import misc
 from torch_utils import persistence
 from torch.nn import functional as F
 
 @persistence.persistent_class
 class VaeGan(torch.nn.Module):
-    def __init__(self, discriminator ,G_mapping ,G_synthesis,G,is_mapping  ):
+    def __init__(self, discriminator ,G_mapping ,G_synthesis,G,is_mapping ,model_attribute ):
         super().__init__()
         self.D=discriminator
    
         self.G_synthesis=G_synthesis
         self.G_mapping=G_mapping
         self.is_mapping=is_mapping
+        self.model_attribute=model_attribute
   
 
  
@@ -35,9 +37,11 @@ class VaeGan(torch.nn.Module):
         loss_Emain_reconstruct=torch.mean(loss_Emain_reconstruct,dim=1)
         VAE_loss=loss_Emain_reconstruct.mul(vae_alpha_d)
             
-        kld_loss = -0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1) 
-        kld_loss=kld_loss.mul(32/50000).mul( vae_beta)
-        VAE_loss += kld_loss 
+
+        if self.model_attribute!=ModelAttribute.autoencoder_by_GAN:
+            kld_loss = -0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1) 
+            kld_loss=kld_loss.mul(32/50000).mul( vae_beta)
+            VAE_loss += kld_loss 
         VAE_loss=torch.unsqueeze(VAE_loss, 1)
         VAE_loss=VAE_loss.mean()
         return VAE_loss,loss_Emain_reconstruct

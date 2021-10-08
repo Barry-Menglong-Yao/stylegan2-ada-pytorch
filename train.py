@@ -65,7 +65,7 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--mirror', help='Enable dataset x-flips [default: false]', type=bool, metavar='BOOL')
 
 # Base config.
-@click.option('--cfg', help='Base config [default: auto]', type=click.Choice(['auto', 'stylegan2', 'paper256', 'paper512', 'paper1024', 'cifar','dcgan','sngan']))
+@click.option('--cfg', help='Base config [default: auto]', type=str)#click.Choice(['auto', 'stylegan2', 'paper256', 'paper512', 'paper1024', 'cifar','dcgan','sngan']))
 @click.option('--gamma', help='Override R1 gamma', type=float)
 @click.option('--kimg', help='Override training duration', type=int, metavar='INT')
 @click.option('--batch', help='Override batch size', type=int, metavar='INT')
@@ -412,6 +412,11 @@ def setup_training_loop_kwargs(
         'cifar':     dict(ref_gpus=2,  kimg=100000, mb=64, mbstd=32, fmaps=1,   lrate=0.0025, gamma=0.01, ema=500, ramp=0.05, map=2),
         'dcgan':     dict(ref_gpus=1,  kimg=10000, mb=64, mbstd=32, fmaps=1,   lrate=0.0002, gamma=0.01, ema=500, ramp=0.05, map=2),
         'sngan':     dict(ref_gpus=1,  kimg=100000, mb=64, mbstd=32, fmaps=1,   lrate=0.0002, gamma=0.01, ema=500, ramp=0.05, map=2),
+        'fine_tune':     dict(ref_gpus=2,  kimg=100000, mb=64, mbstd=32, fmaps=1,   lrate=0.00025, gamma=0.01, ema=500, ramp=0.05, map=2),
+        'fine_tune2':     dict(ref_gpus=2,  kimg=100000, mb=64, mbstd=32, fmaps=1,   lrate=0.000025, gamma=0.01, ema=500, ramp=0.05, map=2),
+        'fine_tune3':     dict(ref_gpus=2,  kimg=100000, mb=64, mbstd=32, fmaps=1,   lrate=0.0005, gamma=0.01, ema=500, ramp=0.05, map=2),
+        'fine_tune4':     dict(ref_gpus=2,  kimg=100000, mb=64, mbstd=32, fmaps=1,   lrate=0.001, gamma=0.01, ema=500, ramp=0.05, map=2),
+        'fine_tune5':     dict(ref_gpus=2,  kimg=100000, mb=64, mbstd=32, fmaps=1,   lrate=0.0015, gamma=0.01, ema=500, ramp=0.05, map=2),
     }
 
     assert cfg in cfg_specs
@@ -442,8 +447,9 @@ def setup_training_loop_kwargs(
     
     
     if  is_GAN_VAE()==True:
-        args.D_kwargs.epilogue_kwargs.model_type= config.model_type
+        args.D_kwargs.epilogue_kwargs.model_type= model_type
         args.G_kwargs.is_mapping=config.is_mapping
+        args.D_kwargs.inject_type=model_attribute.inject_type
         args.loss_kwargs = dnnlib.EasyDict(class_name='training.loss.GANVAELoss', r1_gamma=spec.gamma) 
  
         args.loss_kwargs.vae_alpha_d=vae_alpha_d

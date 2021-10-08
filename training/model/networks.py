@@ -18,6 +18,7 @@ from torch_utils.ops import fma
 from torch import nn
 from torch.nn import functional as F
 import dnnlib.hook_util as hook_util
+from dnnlib.config import config  
 #----------------------------------------------------------------------------
 
 @misc.profiled_function
@@ -288,22 +289,24 @@ class SynthesisLayer(torch.nn.Module):
             self.noise_strength = torch.nn.Parameter(torch.zeros([]))
         self.bias = torch.nn.Parameter(torch.zeros([out_channels]))
 
-    def forward(self, x, w, noise_mode='random', fused_modconv=True, gain=1):
+    def forward(self, x, w,noise=None, noise_mode='random', fused_modconv=True, gain=1):
         assert noise_mode in ['random', 'const', 'none']
         in_resolution = self.resolution // self.up
         misc.assert_shape(x, [None, self.weight.shape[1], in_resolution, in_resolution])
         styles = self.affine(w)
 
-        noise = None
-        if self.use_noise and noise_mode == 'random':
-            noise = torch.randn([x.shape[0], 1, self.resolution, self.resolution], device=x.device) * self.noise_strength
-        if self.use_noise and noise_mode == 'const':
-            noise = self.noise_const * self.noise_strength
-
+        if noise == None:
+            if self.use_noise and noise_mode == 'random':
+                noise = torch.randn([x.shape[0], 1, self.resolution, self.resolution], device=x.device) * self.noise_strength
+            if self.use_noise and noise_mode == 'const':
+                noise = self.noise_const * self.noise_strength
+        # if config.verbose:
+        #     print(f"resolution:{self.resolution},x:{x.shape},noise:{noise.shape},style:{styles.shape}")
         flip_weight = (self.up == 1) # slightly faster
         x = modulated_conv2d(x=x, weight=self.weight, styles=styles, noise=noise, up=self.up,
             padding=self.padding, resample_filter=self.resample_filter, flip_weight=flip_weight, fused_modconv=fused_modconv)
-
+        # if config.verbose:
+        #     print(f"output x:{x.shape} ")
         act_gain = self.act_gain * gain
         act_clamp = self.conv_clamp * gain if self.conv_clamp is not None else None
         x = bias_act.bias_act(x, self.bias.to(x.dtype), act=self.activation, gain=act_gain, clamp=act_clamp)
@@ -381,7 +384,7 @@ class SynthesisBlock(torch.nn.Module):
             self.skip = Conv2dLayer(in_channels, out_channels, kernel_size=1, bias=False, up=2,
                 resample_filter=resample_filter, channels_last=self.channels_last)
 
-    def forward(self, x, img, ws, force_fp32=False, fused_modconv=None, **layer_kwargs):
+    def forward(self, x, img, ws,noise_conv0=None,noise_conv1=None, force_fp32=False, fused_modconv=None, **layer_kwargs):
         misc.assert_shape(ws, [None, self.num_conv + self.num_torgb, self.w_dim])
         w_iter = iter(ws.unbind(dim=1))
         dtype = torch.float16 if self.use_fp16 and not force_fp32 else torch.float32
@@ -398,17 +401,18 @@ class SynthesisBlock(torch.nn.Module):
             misc.assert_shape(x, [None, self.in_channels, self.resolution // 2, self.resolution // 2])
             x = x.to(dtype=dtype, memory_format=memory_format)
 
+  
         # Main layers.
         if self.in_channels == 0:
-            x = self.conv1(x, next(w_iter), fused_modconv=fused_modconv, **layer_kwargs)
+            x = self.conv1(x, next(w_iter),noise=noise_conv0, fused_modconv=fused_modconv, **layer_kwargs)
         elif self.architecture == 'resnet':
             y = self.skip(x, gain=np.sqrt(0.5))
-            x = self.conv0(x, next(w_iter), fused_modconv=fused_modconv, **layer_kwargs)
-            x = self.conv1(x, next(w_iter), fused_modconv=fused_modconv, gain=np.sqrt(0.5), **layer_kwargs)
+            x = self.conv0(x, next(w_iter),noise=noise_conv0, fused_modconv=fused_modconv, **layer_kwargs)
+            x = self.conv1(x, next(w_iter),noise=noise_conv1, fused_modconv=fused_modconv, gain=np.sqrt(0.5), **layer_kwargs)
             x = y.add_(x)
         else:
-            x = self.conv0(x, next(w_iter), fused_modconv=fused_modconv, **layer_kwargs)
-            x = self.conv1(x, next(w_iter), fused_modconv=fused_modconv, **layer_kwargs)
+            x = self.conv0(x, next(w_iter),noise=noise_conv0, fused_modconv=fused_modconv, **layer_kwargs)
+            x = self.conv1(x, next(w_iter),noise=noise_conv1, fused_modconv=fused_modconv, **layer_kwargs)
 
         # ToRGB.
         if img is not None:
@@ -471,11 +475,22 @@ class SynthesisNetwork(torch.nn.Module):
                 w_idx += block.num_conv
 
         x = img = None
+        
         for res, cur_ws in zip(self.block_resolutions, block_ws):
             block = getattr(self, f'b{res}')
-            x, img = block(x, img, cur_ws, **block_kwargs) #32,512,4,4:32,3,4,4;32,512,8,8:32,3,8,8;32,512,16,16:32,3,16,16;32,512,32,32:32,3,32,32;
-            if inject_info!=None:
-                x=inject(inject_info,x,res)
+            noise_conv1=None
+            noise_conv0=None
+            if inject_info!=None and len(inject_info.keys())>0:
+                if "rgb" in inject_info.keys(): #gpen
+                    if block.in_channels != 0:#not first layer
+                        noise_conv1=inject_info["conv0"][res]
+                    noise_conv0=inject_info["rgb"][res]
+                 
+
+            
+            x, img = block(x, img, cur_ws,noise_conv0=noise_conv0,noise_conv1=noise_conv1, **block_kwargs) #32,512,4,4:32,3,4,4;32,512,8,8:32,3,8,8;32,512,16,16:32,3,16,16;32,512,32,32:32,3,32,32;
+            if inject_info!=None : #single_channel
+                x=inject(inject_info,x,res) #sometimes will not use this logic
         return img
 
     def gan_g_loss(self, gen_logits):
@@ -580,32 +595,32 @@ class DiscriminatorBlock(torch.nn.Module):
     def forward(self, x, img, force_fp32=False):
         dtype = torch.float16 if self.use_fp16 and not force_fp32 else torch.float32
         memory_format = torch.channels_last if self.channels_last and not force_fp32 else torch.contiguous_format
-
+        
         # Input.
         if x is not None:
             misc.assert_shape(x, [None, self.in_channels, self.resolution, self.resolution])
             x = x.to(dtype=dtype, memory_format=memory_format)
-
+        x_rgb=x
         # FromRGB.
         if self.in_channels == 0 or self.architecture == 'skip':
             misc.assert_shape(img, [None, self.img_channels, self.resolution, self.resolution])
             img = img.to(dtype=dtype, memory_format=memory_format)
             y = self.fromrgb(img)
-            x = x + y if x is not None else y
+            x_rgb = x + y if x is not None else y
             img = upfirdn2d.downsample2d(img, self.resample_filter) if self.architecture == 'skip' else None
 
         # Main layers.
         if self.architecture == 'resnet':
-            y = self.skip(x, gain=np.sqrt(0.5))
-            x = self.conv0(x)
-            x = self.conv1(x, gain=np.sqrt(0.5))
-            x = y.add_(x)
+            y = self.skip(x_rgb, gain=np.sqrt(0.5))
+            x_conv0 = self.conv0(x_rgb)
+            x_conv1 = self.conv1(x_conv0, gain=np.sqrt(0.5))
+            x_conv1 = y.add_(x_conv1)
         else:
-            x = self.conv0(x)
-            x = self.conv1(x)
+            x_conv0 = self.conv0(x_rgb)
+            x_conv1 = self.conv1(x_conv0)
 
-        assert x.dtype == dtype
-        return x, img
+        assert x_conv1.dtype == dtype
+        return x_conv1, img,x_rgb,x_conv0
 
 #----------------------------------------------------------------------------
 
@@ -690,11 +705,12 @@ class DiscriminatorEpilogue(torch.nn.Module):
             misc.assert_shape(img, [None, self.img_channels, self.resolution, self.resolution])
             img = img.to(dtype=dtype, memory_format=memory_format)
             x = x + self.fromrgb(img)
-
+        x_rgb=x
         # Main layers.
         if self.mbstd is not None:
             x = self.mbstd(x)
         x = self.conv(x)
+        x_conv0=x
         z=None
         mu=None 
         log_var=None
@@ -716,7 +732,7 @@ class DiscriminatorEpilogue(torch.nn.Module):
 
         assert x.dtype == dtype
         
-        return x,z,mu,log_var
+        return x,z,mu,log_var,x_rgb,x_conv0
        
     def reparameterize(self, mu , logvar )  :
         """
@@ -747,6 +763,7 @@ class Discriminator(torch.nn.Module):
         block_kwargs        = {},       # Arguments for DiscriminatorBlock.
         mapping_kwargs      = {},       # Arguments for MappingNetwork.
         epilogue_kwargs     = {},       # Arguments for DiscriminatorEpilogue.
+        inject_type=None,
          
     ):
         super().__init__()
@@ -779,7 +796,7 @@ class Discriminator(torch.nn.Module):
         self.b4 = DiscriminatorEpilogue(channels_dict[4], cmap_dim=cmap_dim, resolution=4, **epilogue_kwargs, **common_kwargs)
         
 
-        inject_type="conv"
+        self.inject_type=inject_type
         if inject_type=="conv":
             self.inject_layer_8=nn.Sequential(
             nn.Conv2d(512, 512,   3,   padding=(1,1)  ),
@@ -808,27 +825,74 @@ class Discriminator(torch.nn.Module):
             nn.Conv2d(512, 1,  3,   padding=(1,1)),
             
             nn.ReLU())  
+        elif inject_type=="gpen":
+            self.inject_layer_rgb_4=nn.Sequential(
+            nn.Conv2d(512, 1,   3,   padding=(1,1)  ),
+            
+            nn.ReLU())
+            self.inject_layer_rgb_8=nn.Sequential(
+            nn.Conv2d(512, 1,   3,   padding=(1,1)  ),
+            
+            nn.ReLU())
+            self.inject_layer_rgb_16=nn.Sequential(
+            nn.Conv2d(512, 1, 3,   padding=(1,1)),
+            
+            nn.ReLU()) 
+            self.inject_layer_rgb_32=nn.Sequential(
+            nn.Conv2d(512, 1,  3,   padding=(1,1)),
+            
+            nn.ReLU())  
+            self.inject_layer_conv0_8=nn.Sequential(
+            nn.Conv2d(512, 1,   3,   padding=(1,1)  ),
+            
+            nn.ReLU())
+            self.inject_layer_conv0_16=nn.Sequential(
+            nn.Conv2d(512, 1, 3,   padding=(1,1)),
+            
+            nn.ReLU()) 
+            self.inject_layer_conv0_32=nn.Sequential(
+            nn.Conv2d(512, 1,  3,   padding=(1,1)),
+            
+            nn.ReLU())  
 
     def forward(self, img, c,role, **block_kwargs):
         x = None
         inject_info={}
+        inject_info_rgb={}
+        inject_info_conv0={}
  
         for res in self.block_resolutions:
             block = getattr(self, f'b{res}')
-            x, img = block(x, img, **block_kwargs)#None:32,3,32,32;32,512,16,16:None;32,512,8,8:None;32,512,4,4:None
-            inject_layer= getattr(self, f'inject_layer_{res}')
-            with torch.cuda.amp.autocast():
-                inject_info[res]=inject_layer(x)
-    
+            x, img,x_rgb,x_conv0 = block(x, img, **block_kwargs)#None:32,3,32,32;32,512,16,16:None;32,512,8,8:None;32,512,4,4:None
+            if self.inject_type=="gpen":
+                inject_layer_rgb= getattr(self, f'inject_layer_rgb_{res}')
+                inject_layer_conv0= getattr(self, f'inject_layer_conv0_{res}')
+                with torch.cuda.amp.autocast():
+                    inject_info_rgb[res]=inject_layer_rgb(x_rgb)
+                    inject_info_conv0[res]=inject_layer_conv0(x_conv0)
+            elif self.inject_type=="conv" or self.inject_type=="single_channel":
+                inject_layer_conv0= getattr(self, f'inject_layer_{res}')
+                with torch.cuda.amp.autocast():
+                    inject_info[res]=inject_layer_conv0(x)
+
 
         cmap = None
         if self.c_dim > 0:
             cmap = self.mapping(None, c)
-        x,z,mu,log_var = self.b4(x, img, cmap) #32,1
+        x,z,mu,log_var,x_rgb,x_conv0 = self.b4(x, img, cmap) #32,1
+        
         # return x,z,mu,log_var
         if role=="discriminator":
             return x
         else:
+            res=4
+            if self.inject_type=="gpen":
+                inject_layer_rgb= getattr(self, f'inject_layer_rgb_{res}')
+                with torch.cuda.amp.autocast():
+                    inject_info_rgb[res]=inject_layer_rgb(x_rgb)
+                inject_info["rgb"]=inject_info_rgb
+                inject_info["conv0"]=inject_info_conv0
+            
             return x,z,mu,log_var,inject_info
     def gan_d_fake_img_loss(self, gen_logits):
         loss_Dgen = torch.nn.functional.softplus(gen_logits)   # -log(1 - sigmoid(gen_logits))

@@ -16,7 +16,8 @@ from torch_utils import misc
 
 @click.command()
 @click.pass_context
-@click.option('--network', 'network_pkl', help='Network pickle filename', default="https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/afhqcat.pkl")
+# @click.option('--network', 'network_pkl', help='Network pickle filename', default="https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/afhqcat.pkl")
+@click.option('--network', 'network_pkl', help='Network pickle filename', default="https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/cifar10.pkl")
 
 def show_model(
     ctx: click.Context,
@@ -32,8 +33,8 @@ def show_model(
  
     z = torch.empty([batch_gpu, G.z_dim], device=device)
     c = torch.empty([batch_gpu, G.c_dim], device=device)
-    img = misc.print_module_summary(G, [z, c])
-    misc.print_module_summary(D, [img, c])
+    img = misc.print_module_summary(G, [z, c],max_nesting=5)
+    misc.print_module_summary(D, [img, c],max_nesting=5)
 
 
 

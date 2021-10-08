@@ -129,7 +129,7 @@ def training_loop(
     total_kimg              = 25000,    # Total length of the training, measured in thousands of real images.
     kimg_per_tick           = 4,        # Progress snapshot interval.   
     image_snapshot_ticks    = 50,       # How often to save image snapshots? None = disable.
-    network_snapshot_ticks  = 50,       # How often to save network snapshots? None = disable.
+    network_snapshot_ticks  = 1000,       #TODO 50; 1000 for 1 day How often to save network snapshots? None = disable.
     resume_pkl              = None,     # Network pickle to resume training from.
     cudnn_benchmark         = True,     # Enable torch.backends.cudnn.benchmark?
     allow_tf32              = False,    # Enable torch.backends.cuda.matmul.allow_tf32 and torch.backends.cudnn.allow_tf32?
@@ -330,7 +330,8 @@ def construct_networks(rank,training_set,G_kwargs,D_kwargs,VAE_kwargs,device,mod
     D=D.to(device)
 
     if not config.is_separate_update_for_vae:
-        vae_gan=dnnlib.util.construct_class_by_name(D,G.mapping,G.synthesis,G,config.is_mapping,class_name=model_attribute.model_name).train()
+        vae_gan=dnnlib.util.construct_class_by_name(D,G.mapping,G.synthesis,G,config.is_mapping,
+        class_name=model_attribute.model_name,model_attribute=model_attribute).train()
         if model_attribute.gan_type !=GanType.SNGAN:
             vae_gan=vae_gan.requires_grad_(False) 
         vae_gan=vae_gan.to(device)
