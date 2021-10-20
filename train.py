@@ -10,7 +10,7 @@
 "Training Generative Adversarial Networks with Limited Data"."""
 
 from tune_vae import fine_tune
-from dnnlib.enums import ModelAttribute
+from dnnlib.enums import EnumEncoder, ModelAttribute
 from metrics.metric_utils import reconstruct
 import os
 import click
@@ -222,7 +222,7 @@ def train_cifar(tuner_config, ctx, outdir, dry_run, config_kwargs  ):
     print()
     print(f'Training options:  ')
      
-    print(json.dumps(args, indent=2))
+    print(to_json_dumps(args))
     print()
     print(f'Output directory:   {args.run_dir}')
     print(f'Training data:      {args.training_set_kwargs.path}')
@@ -243,9 +243,9 @@ def train_cifar(tuner_config, ctx, outdir, dry_run, config_kwargs  ):
     print('Creating output directory...')
     os.makedirs(args.run_dir)
     with open(os.path.join(args.run_dir, 'training_options.json'), 'wt') as f:
-        json.dump(args, f, indent=2)
+        to_json_dump(args, f)
     with open(os.path.join(args.run_dir, 'inner_config.json'), 'wt') as f:
-        json.dump(config, f, indent=2)
+        to_json_dump(config, f)  
 
     # Launch processes.
     print('Launching processes...')
@@ -262,6 +262,12 @@ def train_cifar(tuner_config, ctx, outdir, dry_run, config_kwargs  ):
 
     
 #----------------------------------------------------------------------------
+
+def to_json_dumps(args) -> str:
+    return json.dumps(args, indent=2, cls=EnumEncoder)
+
+def to_json_dump(args, f):
+    return json.dump(args, f, indent=2, cls=EnumEncoder)
 
 def setup_training_loop_kwargs(
     # General options (not included in desc).
@@ -335,7 +341,7 @@ def setup_training_loop_kwargs(
     if snap < 1:
         raise UserError('--snap must be at least 1')
     args.image_snapshot_ticks = snap
-    args.network_snapshot_ticks = snap
+    args.network_snapshot_ticks = snap 
     args.mode=mode
 
     if metrics is None:
@@ -416,7 +422,7 @@ def setup_training_loop_kwargs(
         'fine_tune2':     dict(ref_gpus=2,  kimg=100000, mb=64, mbstd=32, fmaps=1,   lrate=0.000025, gamma=0.01, ema=500, ramp=0.05, map=2),
         'fine_tune3':     dict(ref_gpus=2,  kimg=100000, mb=64, mbstd=32, fmaps=1,   lrate=0.0005, gamma=0.01, ema=500, ramp=0.05, map=2),
         'fine_tune4':     dict(ref_gpus=2,  kimg=100000, mb=64, mbstd=32, fmaps=1,   lrate=0.001, gamma=0.01, ema=500, ramp=0.05, map=2),
-        'fine_tune5':     dict(ref_gpus=2,  kimg=100000, mb=64, mbstd=32, fmaps=1,   lrate=0.0015, gamma=0.01, ema=500, ramp=0.05, map=2),
+        'fine_tune5':     dict(ref_gpus=2,  kimg=100000, mb=64, mbstd=32, fmaps=1,   lrate=0.0002, gamma=0.01, ema=500, ramp=0.05, map=2),
     }
 
     assert cfg in cfg_specs
@@ -450,6 +456,7 @@ def setup_training_loop_kwargs(
         args.D_kwargs.epilogue_kwargs.model_type= model_type
         args.G_kwargs.is_mapping=config.is_mapping
         args.D_kwargs.inject_type=model_attribute.inject_type
+        args.D_kwargs.model_attribute=model_attribute
         args.loss_kwargs = dnnlib.EasyDict(class_name='training.loss.GANVAELoss', r1_gamma=spec.gamma) 
  
         args.loss_kwargs.vae_alpha_d=vae_alpha_d

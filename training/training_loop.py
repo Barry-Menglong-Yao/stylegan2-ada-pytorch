@@ -129,7 +129,7 @@ def training_loop(
     total_kimg              = 25000,    # Total length of the training, measured in thousands of real images.
     kimg_per_tick           = 4,        # Progress snapshot interval.   
     image_snapshot_ticks    = 50,       # How often to save image snapshots? None = disable.
-    network_snapshot_ticks  = 1000,       #TODO 50; 1000 for 1 day How often to save network snapshots? None = disable.
+    network_snapshot_ticks  = 50,       #  1000 for 1 day How often to save network snapshots? None = disable.
     resume_pkl              = None,     # Network pickle to resume training from.
     cudnn_benchmark         = True,     # Enable torch.backends.cudnn.benchmark?
     allow_tf32              = False,    # Enable torch.backends.cuda.matmul.allow_tf32 and torch.backends.cudnn.allow_tf32?
@@ -589,7 +589,8 @@ def save_network(cur_tick,training_set_kwargs,G,D,G_ema,augment_pipe,done,networ
                 module = copy.deepcopy(module).eval().requires_grad_(False).cpu()
             snapshot_data[name] = module
             del module # conserve memory
-        snapshot_pkl = os.path.join(run_dir, f'network-snapshot-{cur_nimg//1000:06d}.pkl')
+        #TODO snapshot_pkl = os.path.join(run_dir, f'network-snapshot-{cur_nimg//1000:06d}.pkl')
+        snapshot_pkl = os.path.join(run_dir, f'network-snapshot.pkl')
         if rank == 0:
             with open(snapshot_pkl, 'wb') as f:
                 pickle.dump(snapshot_data, f)

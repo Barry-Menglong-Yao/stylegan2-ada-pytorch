@@ -481,13 +481,11 @@ class SynthesisNetwork(torch.nn.Module):
             noise_conv1=None
             noise_conv0=None
             if inject_info!=None and len(inject_info.keys())>0:
-                if "rgb" in inject_info.keys(): #gpen
-                    if block.in_channels != 0:#not first layer
-                        noise_conv1=inject_info["conv0"][res]
+                if "rgb" in inject_info.keys() and res in inject_info["rgb"].keys(): #gpen
                     noise_conv0=inject_info["rgb"][res]
-                 
-
-            
+                if "conv0" in inject_info.keys() and res in inject_info["conv0"].keys():  
+                    noise_conv1=inject_info["conv0"][res]
+                    
             x, img = block(x, img, cur_ws,noise_conv0=noise_conv0,noise_conv1=noise_conv1, **block_kwargs) #32,512,4,4:32,3,4,4;32,512,8,8:32,3,8,8;32,512,16,16:32,3,16,16;32,512,32,32:32,3,32,32;
             if inject_info!=None : #single_channel
                 x=inject(inject_info,x,res) #sometimes will not use this logic
@@ -764,6 +762,7 @@ class Discriminator(torch.nn.Module):
         mapping_kwargs      = {},       # Arguments for MappingNetwork.
         epilogue_kwargs     = {},       # Arguments for DiscriminatorEpilogue.
         inject_type=None,
+        model_attribute=None,
          
     ):
         super().__init__()
@@ -797,6 +796,7 @@ class Discriminator(torch.nn.Module):
         
 
         self.inject_type=inject_type
+        self.model_attribute=model_attribute
         if inject_type=="conv":
             self.inject_layer_8=nn.Sequential(
             nn.Conv2d(512, 512,   3,   padding=(1,1)  ),
@@ -826,34 +826,48 @@ class Discriminator(torch.nn.Module):
             
             nn.ReLU())  
         elif inject_type=="gpen":
-            self.inject_layer_rgb_4=nn.Sequential(
-            nn.Conv2d(512, 1,   3,   padding=(1,1)  ),
-            
-            nn.ReLU())
-            self.inject_layer_rgb_8=nn.Sequential(
-            nn.Conv2d(512, 1,   3,   padding=(1,1)  ),
-            
-            nn.ReLU())
-            self.inject_layer_rgb_16=nn.Sequential(
-            nn.Conv2d(512, 1, 3,   padding=(1,1)),
-            
-            nn.ReLU()) 
-            self.inject_layer_rgb_32=nn.Sequential(
-            nn.Conv2d(512, 1,  3,   padding=(1,1)),
-            
-            nn.ReLU())  
-            self.inject_layer_conv0_8=nn.Sequential(
-            nn.Conv2d(512, 1,   3,   padding=(1,1)  ),
-            
-            nn.ReLU())
-            self.inject_layer_conv0_16=nn.Sequential(
-            nn.Conv2d(512, 1, 3,   padding=(1,1)),
-            
-            nn.ReLU()) 
-            self.inject_layer_conv0_32=nn.Sequential(
-            nn.Conv2d(512, 1,  3,   padding=(1,1)),
-            
-            nn.ReLU())  
+            for res in [8,16,32]:
+                if  res in self.model_attribute.inject_layer_list:
+                    rgb_layer=nn.Sequential(
+                    nn.Conv2d(512, 1,   3,   padding=(1,1)  ),
+                    nn.ReLU())
+                    setattr(self, f'inject_layer_rgb_{res}', rgb_layer)
+                    conv0_layer=nn.Sequential(
+                    nn.Conv2d(512, 1,   3,   padding=(1,1)  ),
+                    nn.ReLU())
+                    setattr(self, f'inject_layer_conv0_{res}', conv0_layer)
+            res=4
+            if  res in self.model_attribute.inject_layer_list:
+                rgb_layer=nn.Sequential(
+                nn.Conv2d(512, 1,   3,   padding=(1,1)  ),
+                nn.ReLU())
+                setattr(self, f'inject_layer_rgb_{res}', rgb_layer)
+        elif inject_type=="gpen_repeat_rgb" or inject_type=="gpen_rgb":
+            for res in [4,8,16,32]:
+                if  res in self.model_attribute.inject_layer_list:
+                    rgb_layer=nn.Sequential(
+                    nn.Conv2d(512, 1,   3,   padding=(1,1)  ),
+                    nn.ReLU())
+                    setattr(self, f'inject_layer_rgb_{res}', rgb_layer)
+        elif inject_type=="gpen_repeat_conv0" or inject_type=="gpen_conv0":
+            for res in [8,16,32]:
+                if  res in self.model_attribute.inject_layer_list:
+                     
+                    conv0_layer=nn.Sequential(
+                    nn.Conv2d(512, 1,   3,   padding=(1,1)  ),
+                    nn.ReLU())
+                    setattr(self, f'inject_layer_conv0_{res}', conv0_layer)
+            res=4
+            if  res in self.model_attribute.inject_layer_list:
+                rgb_layer=nn.Sequential(
+                nn.Conv2d(512, 1,   3,   padding=(1,1)  ),
+                nn.ReLU())
+                setattr(self, f'inject_layer_rgb_{res}', rgb_layer)
+         
+                     
+                
+                
+                
 
     def forward(self, img, c,role, **block_kwargs):
         x = None
@@ -864,16 +878,42 @@ class Discriminator(torch.nn.Module):
         for res in self.block_resolutions:
             block = getattr(self, f'b{res}')
             x, img,x_rgb,x_conv0 = block(x, img, **block_kwargs)#None:32,3,32,32;32,512,16,16:None;32,512,8,8:None;32,512,4,4:None
-            if self.inject_type=="gpen":
-                inject_layer_rgb= getattr(self, f'inject_layer_rgb_{res}')
-                inject_layer_conv0= getattr(self, f'inject_layer_conv0_{res}')
-                with torch.cuda.amp.autocast():
-                    inject_info_rgb[res]=inject_layer_rgb(x_rgb)
-                    inject_info_conv0[res]=inject_layer_conv0(x_conv0)
-            elif self.inject_type=="conv" or self.inject_type=="single_channel":
-                inject_layer_conv0= getattr(self, f'inject_layer_{res}')
-                with torch.cuda.amp.autocast():
-                    inject_info[res]=inject_layer_conv0(x)
+            if  res in self.model_attribute.inject_layer_list:
+                if self.inject_type=="gpen":
+                    inject_layer_rgb= getattr(self, f'inject_layer_rgb_{res}')
+                    inject_layer_conv0= getattr(self, f'inject_layer_conv0_{res}')
+                    with torch.cuda.amp.autocast():
+                        inject_info_rgb[res]=inject_layer_rgb(x_rgb)
+                        inject_info_conv0[res]=inject_layer_conv0(x_conv0)
+                elif self.inject_type=="conv" or self.inject_type=="single_channel":
+                    inject_layer_conv0= getattr(self, f'inject_layer_{res}')
+                    with torch.cuda.amp.autocast():
+                        inject_info[res]=inject_layer_conv0(x)
+                elif self.inject_type=="gpen_repeat_rgb":
+                    inject_layer_rgb= getattr(self, f'inject_layer_rgb_{res}')
+                    with torch.cuda.amp.autocast():
+                        inject_info_item=inject_layer_rgb(x_rgb)
+                        inject_info_rgb[res]=inject_info_item
+                        inject_info_conv0[res]=inject_info_item
+                elif self.inject_type=="gpen_repeat_conv0":
+                    inject_layer_conv0= getattr(self, f'inject_layer_conv0_{res}')
+                    with torch.cuda.amp.autocast():
+                        inject_info_item=inject_layer_conv0(x_conv0)
+                        inject_info_rgb[res]=inject_info_item
+                        inject_info_conv0[res]=inject_info_item
+                elif self.inject_type=="gpen_rgb":
+                    inject_layer_rgb= getattr(self, f'inject_layer_rgb_{res}')
+                    with torch.cuda.amp.autocast():
+                        inject_info_item=inject_layer_rgb(x_rgb)
+                        inject_info_rgb[res]=inject_info_item
+                       
+                elif self.inject_type=="gpen_conv0":
+                    inject_layer_conv0= getattr(self, f'inject_layer_conv0_{res}')
+                    with torch.cuda.amp.autocast():
+                        inject_info_item=inject_layer_conv0(x_conv0)
+                       
+                        inject_info_conv0[res]=inject_info_item
+                         
 
 
         cmap = None
@@ -886,12 +926,13 @@ class Discriminator(torch.nn.Module):
             return x
         else:
             res=4
-            if self.inject_type=="gpen":
-                inject_layer_rgb= getattr(self, f'inject_layer_rgb_{res}')
-                with torch.cuda.amp.autocast():
-                    inject_info_rgb[res]=inject_layer_rgb(x_rgb)
-                inject_info["rgb"]=inject_info_rgb
-                inject_info["conv0"]=inject_info_conv0
+            if  res in self.model_attribute.inject_layer_list:
+                if self.inject_type !="conv" and self.inject_type !="single_channel":
+                    inject_layer_rgb= getattr(self, f'inject_layer_rgb_{res}')
+                    with torch.cuda.amp.autocast():
+                        inject_info_rgb[res]=inject_layer_rgb(x_rgb)
+                    inject_info["rgb"]=inject_info_rgb
+                    inject_info["conv0"]=inject_info_conv0
             
             return x,z,mu,log_var,inject_info
     def gan_d_fake_img_loss(self, gen_logits):
