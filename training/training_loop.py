@@ -601,7 +601,7 @@ image_snapshot_ticks,done,cur_tick,mode,reconstruct_loss_value):
     if (snapshot_data is not None) and (len(metrics) > 0):
         if rank == 0:
             print('Evaluating metrics...')
-        total_result_dict=dict(reconstruct_loss=reconstruct_loss_value)
+        total_result_dict=dict()#reconstruct_loss=reconstruct_loss_value
         for metric in metrics: 
             result_dict = metric_main.calc_metric(metric=metric, G=snapshot_data['G_ema'],
                 dataset_kwargs=training_set_kwargs, num_gpus=num_gpus, rank=rank, device=device,D=snapshot_data['D'])
@@ -612,6 +612,6 @@ image_snapshot_ticks,done,cur_tick,mode,reconstruct_loss_value):
         if mode=="hyper_search":
             if (rank == 0) and (image_snapshot_ticks is not None) and (done or cur_tick % image_snapshot_ticks == 0):
                  
-                print(total_result_dict)
+                # print(total_result_dict)
                 tune.report(**total_result_dict)
     del snapshot_data # conserve memory

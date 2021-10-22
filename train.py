@@ -103,6 +103,7 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--evaluate_interval', help='Random seed [default: 0]', type=int,default=15, metavar='INT')
 @click.option('--fine_tune_module', help=' ', type=str,default="d_and_e")
 @click.option('--verbose', help='Print optional information', type=bool, default=True, metavar='BOOL', show_default=True)
+@click.option('--lr', help='lr', type=float)
 def main(ctx, outdir, dry_run, **config_kwargs):
     """Train a GAN using the techniques described in the paper
     "Training Generative Adversarial Networks with Limited Data".
@@ -152,14 +153,13 @@ def main(ctx, outdir, dry_run, **config_kwargs):
     else:
 
         config = {
-            "alpha":  tune.loguniform(5e-1, 200 ),
-            "beta":   tune.loguniform(1e-3, 1) 
+            "lr": tune.loguniform(0.0001, 0.002),
         }
-        gpus_per_trial = 0.5
+        gpus_per_trial = 1
         num_samples=10
         max_num_epochs=6
-        metric_name= "fid50k_full_reconstruct"
-        cpus_per_trial=4
+        metric_name= "fid50k_full"
+        cpus_per_trial=6
 
         scheduler = ASHAScheduler(
             metric= metric_name,
@@ -169,11 +169,12 @@ def main(ctx, outdir, dry_run, **config_kwargs):
             reduction_factor=2)         
         reporter = CLIReporter(
             # parameter_columns=["l1", "l2", "lr", "batch_size"],
-            metric_columns=[ "reconstruct_loss", "fid50k_full" , "fid50k_full_reconstruct", "training_iteration"])                   
+            metric_columns=[  "fid50k_full" , "fid50k_full_reconstruct", "training_iteration"])    #"reconstruct_loss",               
         result = tune.run(
             partial(train_cifar ,ctx=ctx,outdir=outdir,dry_run=dry_run,config_kwargs=config_kwargs),
             resources_per_trial={"cpu": cpus_per_trial, "gpu": gpus_per_trial},
             config=config,
+            stop=stopper,
             num_samples=num_samples,
             scheduler=scheduler,
             progress_reporter=reporter,
@@ -186,15 +187,20 @@ def main(ctx, outdir, dry_run, **config_kwargs):
             best_trial.last_result[ "fid50k_full"]))
         print("Best trial final reconstrction fid: {}".format(
             best_trial.last_result["fid50k_full_reconstruct"]))
-        print("Best trial final reconstruct_loss: {}".format(
-            best_trial.last_result["reconstruct_loss"]))
+        # print("Best trial final reconstruct_loss: {}".format(
+        #     best_trial.last_result["reconstruct_loss"]))
 
+def stopper(trial_id, result):
+    return result["fid50k_full"] > 3.5 or result["training_iteration"] > 7
 
 def update_config(config_kwargs,config):
     if config!=None:
-        config_kwargs['vae_alpha_d']=config["alpha"]
-        config_kwargs['vae_alpha_g']=config["alpha"]
-        config_kwargs['vae_beta']=config["beta"]
+        if "alpha" in config.keys():
+            config_kwargs['vae_alpha_d']=config["alpha"]
+            config_kwargs['vae_alpha_g']=config["alpha"]
+        if "beta" in config.keys():
+            config_kwargs['vae_beta']=config["beta"]
+        config_kwargs['lr']=config["lr"]
 
 def train_cifar(tuner_config, ctx, outdir, dry_run, config_kwargs  ):
     dnnlib.util.Logger(should_flush=True)
@@ -317,6 +323,7 @@ def setup_training_loop_kwargs(
     fine_tune_module=None, 
     verbose=False,
     freeze_type=None,
+    lr=None,
 ):
     args = dnnlib.EasyDict()
     args.verbose=verbose
@@ -437,6 +444,9 @@ def setup_training_loop_kwargs(
         spec.lrate = 0.002 if res >= 1024 else 0.0025
         spec.gamma = 0.0002 * (res ** 2) / spec.mb # heuristic formula
         spec.ema = spec.mb * 10 / 32
+    if lr!=None:
+        spec.lrate=lr
+        print(f"using {lr}")
 
     model_attribute=ModelAttribute[model_type]
     args.G_kwargs = dnnlib.EasyDict(class_name=model_attribute.g_model_name, z_dim=model_attribute.z_dim, w_dim=model_attribute.z_dim, mapping_kwargs=dnnlib.EasyDict(), synthesis_kwargs=dnnlib.EasyDict())
