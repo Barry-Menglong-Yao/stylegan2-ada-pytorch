@@ -62,7 +62,7 @@ def load_vae_model(args,config):
         args.training_set_kwargs,args.num_gpus,args.random_seed,args.batch_size,args.data_loader_kwargs)
 
         generator,discriminator,G_ema,model = training_loop.construct_networks(rank,training_set,args.G_kwargs,args.D_kwargs,
-        args.VAE_kwargs,device,model_attribute)
+        args.VAE_kwargs,device,model_attribute,None,args.batch_size)
         model.requires_grad_(True)
         
         # load_model(config['model_params']['latent_dim'],"dcgan",model_attribute,0,0,config['exp_params']['batch_size'],None )

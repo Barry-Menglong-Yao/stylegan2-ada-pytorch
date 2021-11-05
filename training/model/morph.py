@@ -7,12 +7,23 @@ import torch
 from torch.distributions.uniform import Uniform
 from torch.autograd import Variable
 import matplotlib.pyplot as plt
+from torch_utils import persistence
+
+@persistence.persistent_class
 class Morphing(nn.Module):
-   
-    def forward(self    ):
-        pass
+    def __init__(self,  lan_step_lr,lan_steps,   batch_size,  z_dim,images):
+        super().__init__()
+        # self.writer= SummaryWriter()
+        self.lan_step_lr = lan_step_lr
+        self.lan_steps=lan_steps
+        self.morph_step=0
+        self.train_step=0
+        self.batch_size=batch_size
+        self.z_dim=z_dim
+        # self.images=images
+
     #langevin
-    def morph_z(self, z,  generator, discriminator,real_images ):
+    def morph_z(self, z, c, generator, discriminator,real_images ):
         if not z.requires_grad:
             z.requires_grad = True
         self.z=z
@@ -25,11 +36,11 @@ class Morphing(nn.Module):
         noise_std = torch.sqrt(step_lr * 2) * 0.01
         kernel = getattr(mmd, '_rbf_kernel' ) 
         self.z_l = self.z
-        d_i = discriminator(self.images )[0]
+        d_i = discriminator(self.images,c,"encoder" )[0]
         # history=HistoryZ()
         for i in range(self.lan_steps):
             
-            self.sample_one_step(kernel,d_i,step_lr,noise_std,generator, discriminator, self.batch_size,  self.z_dim, i)
+            self.sample_one_step(kernel,d_i,c,step_lr,noise_std,generator, discriminator, self.batch_size,  self.z_dim, i)
         # self.log_z_one_data(self.z_l)
         # history.draw_z(  )
         return self.z_l
@@ -40,9 +51,9 @@ class Morphing(nn.Module):
 
 
 
-    def sample_one_step(self,kernel,d_i,step_lr,noise_std,generator, discriminator, batch_size,  z_dim, i):
-        current_g = generator(self.z_l,None,None,None,None )
-        d_g = discriminator(current_g )[0]
+    def sample_one_step(self,kernel,d_i,c,step_lr,noise_std,generator, discriminator, batch_size,  z_dim, i):
+        current_g = generator(self.z_l,c,None )
+        d_g = discriminator(current_g,c,"encoder"  )[0]
         # note that we should use k(x,tf.stop_gradient(x)) instead of k(x,x), but k(x,x) also works very well
         _, kxy, _, _, = kernel(d_g, d_i)
         _, kxx, _, _, = kernel(d_g, d_g.detach())
@@ -88,16 +99,7 @@ class Morphing(nn.Module):
         self.morph_step+=1
 
 
-    def __init__(self,  lan_step_lr,lan_steps,   batch_size,  z_dim,images):
-        super().__init__()
-        self.writer= SummaryWriter()
-        self.lan_step_lr = lan_step_lr
-        self.lan_steps=lan_steps
-        self.morph_step=0
-        self.train_step=0
-        self.batch_size=batch_size
-        self.z_dim=z_dim
-        self.images=images
+
    
 
     

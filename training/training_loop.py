@@ -14,6 +14,7 @@ from training.model.vae_gan_model import VaeGan
 from metrics.metric_utils import reconstruct
 import os
 import time
+from training.model.morph import Morphing
 import copy
 import json
 import pickle
@@ -147,7 +148,9 @@ def training_loop(
     fine_tune_module=None, 
     verbose=False,
     config=None,
-    freeze_type=None
+    freeze_type=None,
+    morph_kwargs=None,
+ 
 ):
     model_attribute=ModelAttribute[model_type]
     # Initialize.
@@ -157,7 +160,7 @@ def training_loop(
     training_set_iterator,training_set=load_training_set(rank,training_set_kwargs,num_gpus,random_seed,batch_size,data_loader_kwargs)
 
     # Construct networks.
-    G,D,G_ema,vae_gan=construct_networks(rank,training_set,G_kwargs,D_kwargs,VAE_kwargs,device,model_attribute)
+    G,D,G_ema,vae_gan=construct_networks(rank,training_set,G_kwargs,D_kwargs,VAE_kwargs,device,model_attribute,morph_kwargs,batch_gpu)
      
     # Resume from existing pickle.
     resume(G,D,G_ema,rank,resume_pkl)
@@ -198,11 +201,13 @@ def training_loop(
         # Fetch training data.
         phase_real_img,phase_real_c,all_gen_z,all_gen_c=fetch_training_data(training_set_iterator,device,batch_size,phases,batch_gpu,training_set,G)
          
-        # Execute training phases.
-        reconstruct_loss=execute_training_phases(phase_real_img,phase_real_c,all_gen_z,all_gen_c,device, batch_idx,phases,batch_size,batch_gpu,num_gpus,loss,model_attribute)
+        test_flag=True #TODO 
+        if not test_flag:
+            # Execute training phases.
+            reconstruct_loss=execute_training_phases(phase_real_img,phase_real_c,all_gen_z,all_gen_c,device, batch_idx,phases,batch_size,batch_gpu,num_gpus,loss,model_attribute)
 
-        # Update G_ema.
-        update_G_ema(G,G_ema,ema_kimg,cur_nimg,ema_rampup,batch_size)
+            # Update G_ema.
+            update_G_ema(G,G_ema,ema_kimg,cur_nimg,ema_rampup,batch_size)
          
         # Update state.
         cur_nimg += batch_size
@@ -230,14 +235,14 @@ def training_loop(
                 print('Aborting...')
 
         # Save image snapshot.
-        save_image(rank,image_snapshot_ticks,done,cur_tick,G_ema,grid_z,grid_c,run_dir,cur_nimg,grid_size,real_images,D)
+        save_image(rank,image_snapshot_ticks,done,cur_tick,G_ema,grid_z,grid_c,run_dir,cur_nimg,grid_size,real_images,D,vae_gan)
         
         # Save network snapshot.
-        snapshot_data,snapshot_pkl=save_network(cur_tick,training_set_kwargs,G,D,G_ema,augment_pipe,done,network_snapshot_ticks,rank,num_gpus,run_dir,cur_nimg)
+        snapshot_data,snapshot_pkl=save_network(cur_tick,training_set_kwargs,G,D,G_ema,augment_pipe,done,network_snapshot_ticks,rank,num_gpus,run_dir,cur_nimg,vae_gan)
          
 
         # Evaluate metrics.  
-        evaluate_metrics(snapshot_data,snapshot_pkl,metrics,num_gpus,rank,device,training_set_kwargs,run_dir,stats_metrics,image_snapshot_ticks,done,cur_tick,mode,reconstruct_loss)
+        evaluate_metrics(snapshot_data,snapshot_pkl,metrics,num_gpus,rank,device,training_set_kwargs,run_dir,stats_metrics,image_snapshot_ticks,done,cur_tick,mode,None,vae_gan)
          
         # Collect statistics.
         for phase in phases:
@@ -266,22 +271,22 @@ def training_loop(
         print('Exiting...')
 
 #----------------------------------------------------------------------------
-def save_image(rank,image_snapshot_ticks,done,cur_tick,G_ema,grid_z,grid_c,run_dir,cur_nimg,grid_size,real_images,D):
+def save_image(rank,image_snapshot_ticks,done,cur_tick,G_ema,grid_z,grid_c,run_dir,cur_nimg,grid_size,real_images,D,vae_gan):
     if (rank == 0) and (image_snapshot_ticks is not None) and (done or cur_tick % image_snapshot_ticks == 0):
         images = torch.cat([G_ema(z=z, c=c,inject_info=None, noise_mode='const').detach().cpu() for z, c in zip(grid_z, grid_c)]).numpy()
         save_image_grid(images, os.path.join(run_dir, f'fakes{cur_nimg//1000:06d}.png'), drange=[-1,1], grid_size=grid_size)
 
-        grid_reconstructed_images=reconstruct_grid(real_images,G_ema,D,grid_c)
+        grid_reconstructed_images=reconstruct_grid(real_images,G_ema,D,grid_c,vae_gan)
         save_image_grid(grid_reconstructed_images, os.path.join(run_dir, f'reconstruct{cur_nimg//1000:06d}.png'),drange=[0,255], grid_size=grid_size)
 
 
-def reconstruct_grid(grid_real_images,G_ema,D,grid_c):
+def reconstruct_grid(grid_real_images,G_ema,D,grid_c,vae_gan):
     grid_reconstructed_images=[]
     for real_images, c in zip(grid_real_images, grid_c):
         
         G_kwargs = dnnlib.EasyDict()
         G_kwargs.noise_mode='const'
-        reconstructed_img=reconstruct(real_images ,  G_ema,D,c , G_kwargs=G_kwargs )
+        reconstructed_img=reconstruct(real_images ,  G_ema,D,c , vae_gan,G_kwargs=G_kwargs )
          
         grid_reconstructed_images.append(reconstructed_img.cpu())
     grid_reconstructed_images=torch.cat(grid_reconstructed_images).numpy()
@@ -315,7 +320,7 @@ def load_training_set(rank,training_set_kwargs,num_gpus,random_seed,batch_size,d
     return training_set_iterator,training_set
 
 
-def construct_networks(rank,training_set,G_kwargs,D_kwargs,VAE_kwargs,device,model_attribute):
+def construct_networks(rank,training_set,G_kwargs,D_kwargs,VAE_kwargs,device,model_attribute,morph_kwargs,batch_size):
     if rank == 0:
         print('Constructing networks...')
     common_kwargs = dict(c_dim=training_set.label_dim, img_resolution=training_set.resolution, img_channels=training_set.num_channels)
@@ -328,10 +333,12 @@ def construct_networks(rank,training_set,G_kwargs,D_kwargs,VAE_kwargs,device,mod
         G=G.requires_grad_(False)
     G=G.to(device)
     D=D.to(device)
-
+    # G = dnnlib.util.construct_class_by_name(**G_kwargs, **common_kwargs).train() 
+    morphing=  Morphing(morph_kwargs.lan_step_lr,morph_kwargs.lan_steps,batch_size,morph_kwargs.z_dim,None)
+    morphing=morphing.requires_grad_(False)
     if not config.is_separate_update_for_vae:
-        vae_gan=dnnlib.util.construct_class_by_name(D,G.mapping,G.synthesis,G,config.is_mapping,
-        class_name=model_attribute.model_name,model_attribute=model_attribute).train()
+        vae_gan=dnnlib.util.construct_class_by_name(D,G.mapping,G.synthesis,G,config.is_mapping, 
+        model_attribute,morphing,class_name=model_attribute.model_name ).train()#
         if model_attribute.gan_type !=GanType.SNGAN:
             vae_gan=vae_gan.requires_grad_(False) 
         vae_gan=vae_gan.to(device)
@@ -577,12 +584,12 @@ def update_log(stats_dict,stats_tfevents,start_time,cur_nimg,total_kimg,stats_js
     if progress_fn is not None:
         progress_fn(cur_nimg // 1000, total_kimg)
 
-def save_network(cur_tick,training_set_kwargs,G,D,G_ema,augment_pipe,done,network_snapshot_ticks,rank,num_gpus,run_dir,cur_nimg):
+def save_network(cur_tick,training_set_kwargs,G,D,G_ema,augment_pipe,done,network_snapshot_ticks,rank,num_gpus,run_dir,cur_nimg,vae_gan):
     snapshot_pkl = None
     snapshot_data = None
     if (network_snapshot_ticks is not None) and (done or cur_tick % network_snapshot_ticks == 0):
         snapshot_data = dict(training_set_kwargs=dict(training_set_kwargs))
-        for name, module in [('G', G), ('D', D), ('G_ema', G_ema), ('augment_pipe', augment_pipe)]:
+        for name, module in [('G', G), ('D', D), ('G_ema', G_ema), ('augment_pipe', augment_pipe)]:#,('vae_gan',vae_gan)
             if module is not None:
                 if num_gpus > 1:
                     misc.check_ddp_consistency(module, ignore_regex=r'.*\.w_avg')
@@ -597,14 +604,15 @@ def save_network(cur_tick,training_set_kwargs,G,D,G_ema,augment_pipe,done,networ
     return snapshot_data,snapshot_pkl
 
 def evaluate_metrics(snapshot_data,snapshot_pkl,metrics,num_gpus,rank,device,training_set_kwargs,run_dir,stats_metrics,
-image_snapshot_ticks,done,cur_tick,mode,reconstruct_loss_value):
+image_snapshot_ticks,done,cur_tick,mode,reconstruct_loss_value,vae_gan):
     if (snapshot_data is not None) and (len(metrics) > 0):
         if rank == 0:
             print('Evaluating metrics...')
         total_result_dict=dict()#reconstruct_loss=reconstruct_loss_value
         for metric in metrics: 
             result_dict = metric_main.calc_metric(metric=metric, G=snapshot_data['G_ema'],
-                dataset_kwargs=training_set_kwargs, num_gpus=num_gpus, rank=rank, device=device,D=snapshot_data['D'])
+                dataset_kwargs=training_set_kwargs, num_gpus=num_gpus, rank=rank, device=device,D=snapshot_data['D'],
+                vae_gan=vae_gan)
             if rank == 0:
                 metric_main.report_metric(result_dict, run_dir=run_dir, snapshot_pkl=snapshot_pkl)
             stats_metrics.update(result_dict.results)

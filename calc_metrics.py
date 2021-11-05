@@ -86,14 +86,15 @@ class CommaSeparatedList(click.ParamType):
 
 @click.command()
 @click.pass_context
-@click.option('network_pkl', '--network', help='Network pickle filename or URL', metavar='PATH', required=True)
-@click.option('--metrics', help='Comma-separated list or "none"', type=CommaSeparatedList(), default='fid50k_full', show_default=True)
-@click.option('--data', help='Dataset to evaluate metrics against (directory or zip) [default: same as training data]', metavar='PATH')
+@click.option('network_pkl', '--network',default="training-runs/00448-cifar10-fine_tune3-resumecustom-GAN_VAE_fine_tune_gpen/network-snapshot-009072.pkl", help='Network pickle filename or URL', metavar='PATH', required=True)
+@click.option('--metrics', help='Comma-separated list or "none"', type=CommaSeparatedList(),  show_default=True)#default=['fid50k_full'],
+@click.option('--data',default="/home/barry/workspace/code/referredModels/stylegan2-ada-pytorch/datasets/cifar10.zip", help='Dataset to evaluate metrics against (directory or zip) [default: same as training data]', metavar='PATH')
 @click.option('--mirror', help='Whether the dataset was augmented with x-flips during training [default: look up]', type=bool, metavar='BOOL')
 @click.option('--gpus', help='Number of GPUs to use', type=int, default=1, metavar='INT', show_default=True)
 @click.option('--verbose', help='Print optional information', type=bool, default=True, metavar='BOOL', show_default=True)
-
-def calc_metrics(ctx, network_pkl, metrics, data, mirror, gpus, verbose):
+@click.option('--lan_step_lr', default=0.1, type=float) #0.1
+@click.option('--lan_steps',  default=1, type=int) #1
+def calc_metrics(ctx, network_pkl, metrics, data, mirror, gpus, verbose,lan_step_lr,lan_steps):
     """Calculate quality metrics for previous training run or pretrained network pickle.
 
     Examples:
@@ -171,7 +172,8 @@ def calc_metrics(ctx, network_pkl, metrics, data, mirror, gpus, verbose):
         pkl_dir = os.path.dirname(network_pkl)
         if os.path.isfile(os.path.join(pkl_dir, 'training_options.json')):
             args.run_dir = pkl_dir
-
+    args.lan_step_lr=lan_step_lr
+    args.lan_steps=lan_steps
     # Launch processes.
     if args.verbose:
         print('Launching processes...')

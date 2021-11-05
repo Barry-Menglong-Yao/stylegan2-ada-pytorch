@@ -6,3 +6,4 @@ training-runs/**
 datasets/**
 dnnlib/experiment.csv
 training/fine_tune_vae/logs
+runs/ 

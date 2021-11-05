@@ -7,28 +7,39 @@ from torch.nn import functional as F
 
 @persistence.persistent_class
 class VaeGan(torch.nn.Module):
-    def __init__(self, discriminator ,G_mapping ,G_synthesis,G,is_mapping ,model_attribute ):
+    def __init__(self, discriminator ,G_mapping ,G_synthesis,G,is_mapping ,model_attribute,morphing ):
         super().__init__()
         self.D=discriminator
-   
+        self.G=G
         self.G_synthesis=G_synthesis
         self.G_mapping=G_mapping
         self.is_mapping=is_mapping
         self.model_attribute=model_attribute
-  
+        self.morphing=morphing
+        if morphing!=None:
+            self.lan_steps=self.morphing.lan_steps 
+        else: 
+            self.lan_steps=0
 
  
-    def forward(self, real_img, real_c,  sync  ):
+    def forward(self, real_img, real_c,  sync  ,truncation_psi=1, truncation_cutoff=None, **synthesis_kwargs ):
         with misc.ddp_sync(self.D , sync): 
             real_logits,gen_z_of_real_img ,mu,log_var,inject_info = self.D(real_img, real_c,"encoder")
+        
+        reconstructed_img=self.sample(gen_z_of_real_img,real_c,sync,inject_info,real_img,truncation_psi,truncation_cutoff, **synthesis_kwargs)
+        return  reconstructed_img,mu,log_var
+
+    def sample(self,z, c,sync ,inject_info,refer_images  ,truncation_psi=1, truncation_cutoff=None, **synthesis_kwargs):
+        if self.lan_steps > 0:
+            z=self.morphing.morph_z(z,c,self.G, self.D,refer_images )
         if self.is_mapping:
             with misc.ddp_sync(self.G_mapping, sync):
-                ws = self.G_mapping(gen_z_of_real_img, real_c)
+                ws = self.G_mapping(z, c, truncation_psi=truncation_psi, truncation_cutoff=truncation_cutoff)
         else:
-            ws=gen_z_of_real_img.unsqueeze(1).repeat([1, self.G_mapping.num_ws, 1])
+            ws=z.unsqueeze(1).repeat([1, self.G_mapping.num_ws, 1])
         with misc.ddp_sync(self.G_synthesis, sync):
-            reconstructed_img = self.G_synthesis(ws,inject_info)
-        return  reconstructed_img,mu,log_var
+            reconstructed_img = self.G_synthesis(ws,inject_info, **synthesis_kwargs)
+        return  reconstructed_img
 
     def vae_loss(self, reconstructed_img, real_img,mu,log_var,vae_beta,vae_alpha_d):
         loss = torch.nn.MSELoss(reduction='none')
