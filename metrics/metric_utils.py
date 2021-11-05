@@ -253,10 +253,13 @@ def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel
  
     # Setup generator and load labels.
     G = copy.deepcopy(opts.G).eval().requires_grad_(False).to(opts.device)
-    vae_gan=copy.deepcopy(opts.vae_gan).eval().requires_grad_(False).to(opts.device)
-    dataset,dataloader=get_data_loader(opts,batch_size)
+    vae_gan= opts.vae_gan 
+    # vae_gan=copy.deepcopy(opts.vae_gan).eval().requires_grad_(False).to(opts.device)
+    dataset,dataloader=get_data_loader(opts,batch_gen)
     # Image generation func.
     def run_generator(z, c,refer_images):
+        refer_images=refer_images.to( opts.device)
+        refer_images=(refer_images.to(torch.float32) / 127.5 - 1)
         img = vae_gan.sample(z,c,False,None,refer_images, **opts.G_kwargs   )
         # img = G(z=z, c=c,inject_info=None, **opts.G_kwargs)
         img = (img * 127.5 + 128).clamp(0, 255).to(torch.uint8)
@@ -274,6 +277,7 @@ def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel
     progress = opts.progress.sub(tag='generator features', num_items=stats.max_items, rel_lo=rel_lo, rel_hi=rel_hi)
     detector = get_feature_detector(url=detector_url, device=opts.device, num_gpus=opts.num_gpus, rank=opts.rank, verbose=progress.verbose)
 
+    dataiter = iter(dataloader)
     # Main loop.
     while not stats.is_full():
         images = []
@@ -281,7 +285,7 @@ def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel
             z = torch.randn([batch_gen, G.z_dim], device=opts.device)
             c = [dataset.get_label(np.random.randint(len(dataset))) for _i in range(batch_gen)]
             c = torch.from_numpy(np.stack(c)).pin_memory().to(opts.device)
-            refer_images, _ = next(iter(dataloader))
+            refer_images, _ = dataiter.next()
             images.append(run_generator(z, c,refer_images))
         images = torch.cat(images)
         if images.shape[1] == 1:
@@ -323,7 +327,8 @@ def compute_feature_stats_for_reconstruct(opts, detector_url, detector_kwargs, r
 def reconstruct_image(images,opts,  batch_size,dataset=None  ):
     G = copy.deepcopy(opts.G).eval().requires_grad_(False).to(opts.device)
     D=copy.deepcopy(opts.D).eval().requires_grad_(False).to(opts.device)
-    vae_gan=copy.deepcopy(opts.vae_gan).eval().requires_grad_(False).to(opts.device)
+    # vae_gan=copy.deepcopy(opts.vae_gan).eval().requires_grad_(False).to(opts.device)
+    vae_gan= opts.vae_gan 
     real_c=generate_c(opts,dataset,batch_size)
     reconstructed_img=reconstruct(images ,  G,D,real_c,vae_gan,opts.device,G_kwargs=opts.G_kwargs  )
 

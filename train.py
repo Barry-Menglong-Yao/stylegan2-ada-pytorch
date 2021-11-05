@@ -77,7 +77,7 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--augpipe', help='Augmentation pipeline [default: bgc]', type=click.Choice(['blit', 'geom', 'color', 'filter', 'noise', 'cutout', 'bg', 'bgc', 'bgcf', 'bgcfn', 'bgcfnc']))
 
 # Transfer learning.
-@click.option('--resume', help='Resume training [default: noresume]', metavar='PKL',default="https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/paper-fig11b-cifar10/cifar10u-cifar-ada-best-fid.pkl")
+@click.option('--resume', help='Resume training [default: noresume]', metavar='PKL',default="training-runs/00448-cifar10-fine_tune3-resumecustom-GAN_VAE_fine_tune_gpen/network-snapshot-009072.pkl") #"https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/paper-fig11b-cifar10/cifar10u-cifar-ada-best-fid.pkl"
  
 @click.option('--freezed', help='Freeze-D [default: 0 layers]', type=int, metavar='INT')
 @click.option('--freeze_type', help='  [default: ]', type=click.Choice(["d_and_e","e", "g_d_e"   ]))
@@ -104,8 +104,8 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--fine_tune_module', help=' ', type=str,default="d_and_e")
 @click.option('--verbose', help='Print optional information', type=bool, default=True, metavar='BOOL', show_default=True)
 @click.option('--lr', help='lr', type=float)
-@click.option('--lan_step_lr', default=0.1, type=float)
-@click.option('--lan_steps',  default=1, type=int)
+@click.option('--lan_step_lr', default=0.5, type=float)
+@click.option('--lan_steps',  default=10, type=int)
 def main(ctx, outdir, dry_run, **config_kwargs):
     """Train a GAN using the techniques described in the paper
     "Training Generative Adversarial Networks with Limited Data".
@@ -359,7 +359,7 @@ def setup_training_loop_kwargs(
     args.mode=mode
 
     if metrics is None:
-        metrics = ['fid50k_full_reconstruct','fid50k_full']
+        metrics = ['fid50k_full','fid50k_full_reconstruct']
     assert isinstance(metrics, list)
     if not all(metric_main.is_valid_metric(metric) for metric in metrics):
         raise UserError('\n'.join(['--metrics can only contain the following values:'] + metric_main.list_valid_metrics()))
