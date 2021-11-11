@@ -244,6 +244,9 @@ def training_loop(
         # Evaluate metrics.  
         evaluate_metrics(snapshot_data,snapshot_pkl,metrics,num_gpus,rank,device,training_set_kwargs,run_dir,stats_metrics,image_snapshot_ticks,done,cur_tick,mode,None,vae_gan)
          
+        if   test_flag:
+            break
+
         # Collect statistics.
         for phase in phases:
             value = []

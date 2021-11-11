@@ -278,6 +278,7 @@ def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel
     detector = get_feature_detector(url=detector_url, device=opts.device, num_gpus=opts.num_gpus, rank=opts.rank, verbose=progress.verbose)
 
     dataiter = iter(dataloader)
+    refer_images=None
     # Main loop.
     while not stats.is_full():
         images = []
@@ -285,7 +286,12 @@ def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel
             z = torch.randn([batch_gen, G.z_dim], device=opts.device)
             c = [dataset.get_label(np.random.randint(len(dataset))) for _i in range(batch_gen)]
             c = torch.from_numpy(np.stack(c)).pin_memory().to(opts.device)
-            refer_images, _ = dataiter.next()
+            try:
+                old_refer_images=refer_images
+                refer_images, _ = dataiter.next()
+            except :
+                refer_images=old_refer_images
+                
             images.append(run_generator(z, c,refer_images))
         images = torch.cat(images)
         if images.shape[1] == 1:

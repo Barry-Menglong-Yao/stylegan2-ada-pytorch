@@ -77,7 +77,7 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--augpipe', help='Augmentation pipeline [default: bgc]', type=click.Choice(['blit', 'geom', 'color', 'filter', 'noise', 'cutout', 'bg', 'bgc', 'bgcf', 'bgcfn', 'bgcfnc']))
 
 # Transfer learning.
-@click.option('--resume', help='Resume training [default: noresume]', metavar='PKL',default="training-runs/00448-cifar10-fine_tune3-resumecustom-GAN_VAE_fine_tune_gpen/network-snapshot-009072.pkl") #"https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/paper-fig11b-cifar10/cifar10u-cifar-ada-best-fid.pkl"
+@click.option('--resume', help='Resume training [default: noresume]', metavar='PKL',default="/home/barry/workspace/code/referredModels/stylegan2-ada-pytorch/training-runs/00448-cifar10-fine_tune3-resumecustom-GAN_VAE_fine_tune_gpen/network-snapshot-007862.pkl") #"https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/paper-fig11b-cifar10/cifar10u-cifar-ada-best-fid.pkl"
  
 @click.option('--freezed', help='Freeze-D [default: 0 layers]', type=int, metavar='INT')
 @click.option('--freeze_type', help='  [default: ]', type=click.Choice(["d_and_e","e", "g_d_e"   ]))
@@ -155,12 +155,14 @@ def main(ctx, outdir, dry_run, **config_kwargs):
     else:
 
         config = {
-            "alpha":   tune.choice([100, 90, 70, 80,60,40,30,20,10]),
-            "beta":    tune.choice([10,1,0.1,0.5,0.3,0.05,0.01])
+            # "alpha":   tune.choice([100, 90, 70, 80,60,40,30,20,10]),
+            # "beta":    tune.choice([10,1,0.1,0.5,0.3,0.05,0.01])
+            "lan_step_lr": tune.choice([0.01, 0.1, 0.3, 0.5,0.8,1 ]),
+            "lan_steps":tune.choice([10, 15, 20, 30,40 ])
         }
         gpus_per_trial = 1
-        num_samples=50
-        max_num_epochs=10
+        num_samples=40
+        max_num_epochs=1
         metric_name= "fid50k_full"
         cpus_per_trial=6
 
@@ -168,7 +170,7 @@ def main(ctx, outdir, dry_run, **config_kwargs):
             metric= metric_name,
             mode="min",
             max_t=max_num_epochs,
-            grace_period=2,
+            grace_period=1,
             reduction_factor=2)         
         reporter = CLIReporter(
             # parameter_columns=["l1", "l2", "lr", "batch_size"],
@@ -177,7 +179,7 @@ def main(ctx, outdir, dry_run, **config_kwargs):
             partial(train_cifar ,ctx=ctx,outdir=outdir,dry_run=dry_run,config_kwargs=config_kwargs),
             resources_per_trial={"cpu": cpus_per_trial, "gpu": gpus_per_trial},
             config=config,
-            stop=stopper,
+            # stop=stopper,
             num_samples=num_samples,
             scheduler=scheduler,
             progress_reporter=reporter,
@@ -205,6 +207,10 @@ def update_config(config_kwargs,config):
             config_kwargs['vae_beta']=config["beta"]
         if "lr" in config.keys():
             config_kwargs['lr']=config["lr"]
+        if "lan_step_lr" in config.keys():
+            config_kwargs['lan_step_lr']=config["lan_step_lr"]
+        if "lan_steps" in config.keys():
+            config_kwargs['lan_steps']=config["lan_steps"]
 
 def train_cifar(tuner_config, ctx, outdir, dry_run, config_kwargs  ):
     dnnlib.util.Logger(should_flush=True)
