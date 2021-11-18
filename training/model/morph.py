@@ -11,42 +11,46 @@ from torch_utils import persistence
 
 @persistence.persistent_class
 class Morphing(nn.Module):
-    def __init__(self,  lan_step_lr,lan_steps,   batch_size,  z_dim,images):
+    def __init__(self,  lan_step_lr,lan_steps ):
         super().__init__()
         # self.writer= SummaryWriter()
         self.lan_step_lr = lan_step_lr
         self.lan_steps=lan_steps
         self.morph_step=0
         self.train_step=0
-        self.batch_size=batch_size
-        self.z_dim=z_dim
+        # self.batch_size=batch_size
+        # self.z_dim=z_dim
         # self.images=images
 
     #langevin
     def morph_z(self, z, c, generator, discriminator,real_images ):
-        if not z.requires_grad:
-            z.requires_grad = True
-        self.z=z
-        self.images=real_images
-         
-        batch_size=z.shape[0]
+        if self.lan_steps>0:
+            if z.shape[0]==real_images.shape[0]:
+                if not z.requires_grad:
+                    z.requires_grad = True
+                self.z=z
+                self.z_dim=z.shape[1]
+                self.images=real_images
+                
+                batch_size=z.shape[0]
 
-        step_lr = self.lan_step_lr
-        step_lr=torch.tensor(step_lr)
-        noise_std = torch.sqrt(step_lr * 2) * 0.01
-        kernel = getattr(mmd, '_rbf_kernel' ) 
-        self.z_l = self.z
-        d_i = discriminator(self.images,c,"encoder" )[0]
-        # history=HistoryZ()
-        for i in range(self.lan_steps):
-            
-            self.sample_one_step(kernel,d_i,c,step_lr,noise_std,generator, discriminator, batch_size,  self.z_dim, i)
-        # self.log_z_one_data(self.z_l)
-        # history.draw_z(  )
-        return self.z_l
-            # self.G_lan = generator(self.z_l, self.batch_size, update_collection=update_collection)
-            # convert to NHWC format for sampling images
-            #TODO why transpose? self.G_lan = torch.transpose(self.G_lan, [0, 2, 3, 1])
+                step_lr = self.lan_step_lr
+                step_lr=torch.tensor(step_lr)
+                noise_std = torch.sqrt(step_lr * 2) * 0.01
+                kernel = getattr(mmd, '_rbf_kernel' ) 
+                self.z_l = self.z
+                d_i = discriminator(self.images,c,"encoder" )[0]
+                # history=HistoryZ()
+                for i in range(self.lan_steps):
+                    
+                    self.sample_one_step(kernel,d_i,c,step_lr,noise_std,generator, discriminator, batch_size,  self.z_dim, i)
+                # self.log_z_one_data(self.z_l)
+                # history.draw_z(  )
+                return self.z_l
+        return z
+                # self.G_lan = generator(self.z_l, self.batch_size, update_collection=update_collection)
+                # convert to NHWC format for sampling images
+                #TODO why transpose? self.G_lan = torch.transpose(self.G_lan, [0, 2, 3, 1])
 
 
 

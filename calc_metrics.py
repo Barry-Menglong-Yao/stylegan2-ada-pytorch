@@ -9,11 +9,12 @@
 """Calculate quality metrics for previous training run or pretrained network pickle."""
 
 import os
+import pickle
 import click
 import json
 import tempfile
 import copy
-import torch
+
 import dnnlib
 
 import legacy
@@ -22,10 +23,16 @@ from metrics import metric_utils
 from torch_utils import training_stats
 from torch_utils import custom_ops
 from torch_utils import misc
-
+from training.model.morph import Morphing
+from ray import tune
+from ray.tune import CLIReporter
+from ray.tune.schedulers import ASHAScheduler
+from functools import partial
 #----------------------------------------------------------------------------
+ 
 
-def subprocess_fn(rank, args, temp_dir):
+def subprocess_fn(rank, args, temp_dir,mode):
+    import torch
     dnnlib.util.Logger(should_flush=True)
 
     # Init torch.distributed.
@@ -46,31 +53,44 @@ def subprocess_fn(rank, args, temp_dir):
 
     # Print network summary.
     device = torch.device('cuda', rank)
+ 
     torch.backends.cudnn.benchmark = True
-    torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
+    torch.backends.cuda.matmul.allow_tf32 = False
     G = copy.deepcopy(args.G).eval().requires_grad_(False).to(device)
+    D = copy.deepcopy(args.D).eval().requires_grad_(False).to(device)
+    morphing=build_morph(args)
+    
     if rank == 0 and args.verbose:
         z = torch.empty([1, G.z_dim], device=device)
         c = torch.empty([1, G.c_dim], device=device)
-        misc.print_module_summary(G, [z, c])
-
+        misc.print_module_summary(G, [z, c,None])
+    total_result_dict=dict()
     # Calculate each metric.
     for metric in args.metrics:
         if rank == 0 and args.verbose:
             print(f'Calculating {metric}...')
         progress = metric_utils.ProgressMonitor(verbose=args.verbose)
         result_dict = metric_main.calc_metric(metric=metric, G=G, dataset_kwargs=args.dataset_kwargs,
-            num_gpus=args.num_gpus, rank=rank, device=device, progress=progress)
+            num_gpus=args.num_gpus, rank=rank, device=device, progress=progress,D=D,morphing=morphing)
         if rank == 0:
             metric_main.report_metric(result_dict, run_dir=args.run_dir, snapshot_pkl=args.network_pkl)
         if rank == 0 and args.verbose:
             print()
+        total_result_dict.update(result_dict.results)
 
     # Done.
     if rank == 0 and args.verbose:
         print('Exiting...')
 
+    if args.mode=="hyper_search":
+             
+        tune.report(**total_result_dict)
+
+
+def build_morph(args):
+    morphing=  Morphing(args.lan_step_lr,args.lan_steps )
+    return morphing
 #----------------------------------------------------------------------------
 
 class CommaSeparatedList(click.ParamType):
@@ -86,15 +106,26 @@ class CommaSeparatedList(click.ParamType):
 
 @click.command()
 @click.pass_context
-@click.option('network_pkl', '--network',default="training-runs/00448-cifar10-fine_tune3-resumecustom-GAN_VAE_fine_tune_gpen/network-snapshot-009072.pkl", help='Network pickle filename or URL', metavar='PATH', required=True)
+@click.option('network_pkl', '--network',default="/home/barry/workspace/code/referredModels/stylegan2-ada-pytorch/training-runs/00448-cifar10-fine_tune3-resumecustom-GAN_VAE_fine_tune_gpen/network-snapshot-009072.pkl", help='Network pickle filename or URL', metavar='PATH', required=True)
 @click.option('--metrics', help='Comma-separated list or "none"', type=CommaSeparatedList(),  show_default=True)#default=['fid50k_full'],
 @click.option('--data',default="/home/barry/workspace/code/referredModels/stylegan2-ada-pytorch/datasets/cifar10.zip", help='Dataset to evaluate metrics against (directory or zip) [default: same as training data]', metavar='PATH')
 @click.option('--mirror', help='Whether the dataset was augmented with x-flips during training [default: look up]', type=bool, metavar='BOOL')
 @click.option('--gpus', help='Number of GPUs to use', type=int, default=1, metavar='INT', show_default=True)
 @click.option('--verbose', help='Print optional information', type=bool, default=True, metavar='BOOL', show_default=True)
-@click.option('--lan_step_lr', default=0.1, type=float) #0.1
-@click.option('--lan_steps',  default=1, type=int) #1
-def calc_metrics(ctx, network_pkl, metrics, data, mirror, gpus, verbose,lan_step_lr,lan_steps):
+@click.option('--lan_step_lr', default=0.3, type=float) #0.1
+@click.option('--lan_steps',  default=10, type=int) #1
+@click.option('--mode', help=' ',default='test', type=click.Choice(['test','hyper_search' ]))
+def main(ctx, network_pkl, metrics, data, mirror, gpus, verbose,lan_step_lr,lan_steps,mode):
+    if mode!="hyper_search":
+        calc_metrics(None,ctx, network_pkl, metrics, data, mirror, gpus, verbose,lan_step_lr,lan_steps,mode)
+    else:
+        hyper_search(ctx, network_pkl, metrics, data, mirror, gpus, verbose,lan_step_lr,lan_steps,mode)
+
+
+ 
+
+
+def calc_metrics(tuner_config, ctx, network_pkl, metrics, data, mirror, gpus, verbose,lan_step_lr,lan_steps,mode):
     """Calculate quality metrics for previous training run or pretrained network pickle.
 
     Examples:
@@ -129,6 +160,10 @@ def calc_metrics(ctx, network_pkl, metrics, data, mirror, gpus, verbose,lan_step
         ppl_zend     Perceptual path length in Z at path endpoints against cropped image.
         ppl_wend     Perceptual path length in W at path endpoints against cropped image.
     """
+    import torch
+    lan_steps,lan_step_lr=update_config(lan_steps,lan_step_lr,tuner_config) 
+    
+    
     dnnlib.util.Logger(should_flush=True)
 
     # Validate arguments.
@@ -146,6 +181,8 @@ def calc_metrics(ctx, network_pkl, metrics, data, mirror, gpus, verbose,lan_step
     with dnnlib.util.open_url(network_pkl, verbose=args.verbose) as f:
         network_dict = legacy.load_network_pkl(f)
         args.G = network_dict['G_ema'] # subclass of torch.nn.Module
+        args.D = network_dict['D'] 
+
 
     # Initialize dataset options.
     if data is not None:
@@ -180,13 +217,64 @@ def calc_metrics(ctx, network_pkl, metrics, data, mirror, gpus, verbose,lan_step
     torch.multiprocessing.set_start_method('spawn')
     with tempfile.TemporaryDirectory() as temp_dir:
         if args.num_gpus == 1:
-            subprocess_fn(rank=0, args=args, temp_dir=temp_dir)
+            subprocess_fn(rank=0, args=args, temp_dir=temp_dir,mode=mode)
         else:
-            torch.multiprocessing.spawn(fn=subprocess_fn, args=(args, temp_dir), nprocs=args.num_gpus)
+            torch.multiprocessing.spawn(fn=subprocess_fn, args=(args, temp_dir,mode), nprocs=args.num_gpus)
+
+
+def hyper_search(ctx, network_pkl, metrics, data, mirror, gpus, verbose,lan_step_lr,lan_steps,mode):
+    config = {
+        "lan_steps":  tune.choice([10,15,20,30,50]),#10,15,20,30,50,100
+        "lan_step_lr":tune.choice([0.01,0.1,0.3,0.5,0.7]) #  0.01,0.1,0.3,0.5,0.7
+    }
+    num_samples=25
+    gpus_per_trial = 1
+    max_num_epochs=1
+    metric_name= "fid50k_full"
+    cpus_per_trial=6
+
+    scheduler = ASHAScheduler(
+        metric= metric_name,
+        mode="min",
+        max_t=max_num_epochs,
+        grace_period=1,
+        reduction_factor=2)         
+    reporter = CLIReporter(
+        # parameter_columns=["l1", "l2", "lr", "batch_size"],
+        metric_columns=[  "fid50k_full" ,  "training_iteration"],max_progress_rows=num_samples)                   # "fid50k_full_reconstruct",
+    result = tune.run(
+        partial(calc_metrics , ctx=ctx,network_pkl=network_pkl,  metrics=metrics, data=data,mirror=mirror,   gpus=gpus, verbose=verbose, lan_steps=lan_steps,lan_step_lr=lan_step_lr ,mode=mode), #
+        resources_per_trial={"cpu": cpus_per_trial, "gpu": gpus_per_trial},
+        config=config,
+        num_samples=num_samples,
+        scheduler=scheduler,
+        progress_reporter=reporter,
+        checkpoint_at_end=False) 
+      
+
+    best_trial = result.get_best_trial(metric_name, "min", "last")
+    print("Best trial config: {}".format(best_trial.config))
+    print("Best trial final generation fid: {}".format(
+        best_trial.last_result[ "fid50k_full"]))
+    # print("Best trial final reconstrction fid: {}".format(
+    #     best_trial.last_result["fid50k_full_reconstruct"]))
+ 
+
+
+
+def update_config(lan_steps,lan_step_lr,tuner_config) :
+    if tuner_config!=None:
+        return tuner_config["lan_steps"],tuner_config["lan_step_lr"]
+    else:
+        return lan_steps,lan_step_lr
+
+
+ 
 
 #----------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    calc_metrics() # pylint: disable=no-value-for-parameter
+    main() # pylint: disable=no-value-for-parameter
+    # test1()
 
 #----------------------------------------------------------------------------

@@ -20,7 +20,7 @@ import dnnlib
 
 class MetricOptions:
     def __init__(self, G=None, G_kwargs={}, dataset_kwargs={}, num_gpus=1, rank=0, device=None, progress=None, 
-    cache=True,D=None,vae_gan=None):
+    cache=True,D=None,morphing=None):
         assert 0 <= rank < num_gpus
         self.G              = G
         self.G_kwargs       = dnnlib.EasyDict(G_kwargs)
@@ -31,7 +31,7 @@ class MetricOptions:
         self.progress       = progress.sub() if progress is not None and rank == 0 else ProgressMonitor()
         self.cache          = cache
         self.D=D
-        self.vae_gan=vae_gan
+        self.morph=morphing
 
 #----------------------------------------------------------------------------
 
@@ -180,9 +180,6 @@ class ProgressMonitor:
 
 #----------------------------------------------------------------------------
 
-
-
-
 def compute_feature_stats_for_dataset(opts, detector_url, detector_kwargs, rel_lo=0, rel_hi=1, batch_size=64, data_loader_kwargs=None, max_items=None, **stats_kwargs):
     dataset = dnnlib.util.construct_class_by_name(**opts.dataset_kwargs)
     if data_loader_kwargs is None:
@@ -234,16 +231,6 @@ def compute_feature_stats_for_dataset(opts, detector_url, detector_kwargs, rel_l
     return stats
 
 #----------------------------------------------------------------------------
-def get_data_loader(opts,batch_size,data_loader_kwargs=None,max_items=None):
-    dataset = dnnlib.util.construct_class_by_name(**opts.dataset_kwargs)
-    num_items = len(dataset)
-    if max_items is not None:
-        num_items = min(num_items, max_items)
-    item_subset = [(i * opts.num_gpus + opts.rank) % num_items for i in range((num_items - 1) // opts.num_gpus + 1)]
-    if data_loader_kwargs is None:
-        data_loader_kwargs = dict(pin_memory=True, num_workers=3, prefetch_factor=2)
-    dataloader=torch.utils.data.DataLoader(dataset=dataset, sampler=item_subset, batch_size=batch_size, **data_loader_kwargs)
-    return dataset,dataloader
 
 
 def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel_lo=0, rel_hi=1, batch_size=64, batch_gen=None, jit=False, **stats_kwargs):
@@ -253,15 +240,15 @@ def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel
  
     # Setup generator and load labels.
     G = copy.deepcopy(opts.G).eval().requires_grad_(False).to(opts.device)
-    vae_gan= opts.vae_gan 
-    # vae_gan=copy.deepcopy(opts.vae_gan).eval().requires_grad_(False).to(opts.device)
-    dataset,dataloader=get_data_loader(opts,batch_gen)
+    D=  copy.deepcopy(opts.D).eval().requires_grad_(False).to(opts.device)
+    dataset,dataloader = get_data_loader(opts,batch_gen)
+
     # Image generation func.
-    def run_generator(z, c,refer_images):
+    def run_generator(z, c,refer_images,morph):
         refer_images=refer_images.to( opts.device)
-        refer_images=(refer_images.to(torch.float32) / 127.5 - 1)
-        img = vae_gan.sample(z,c,False,None,refer_images, **opts.G_kwargs   )
-        # img = G(z=z, c=c,inject_info=None, **opts.G_kwargs)
+        processed_refer_images=(refer_images.to(torch.float32) / 127.5 - 1)
+        z=morph.morph_z(z,c,G,D,processed_refer_images)
+        img = G(z=z, c=c,inject_info=None, **opts.G_kwargs)
         img = (img * 127.5 + 128).clamp(0, 255).to(torch.uint8)
         return img
 
@@ -279,6 +266,7 @@ def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel
 
     dataiter = iter(dataloader)
     refer_images=None
+    old_refer_images=None
     # Main loop.
     while not stats.is_full():
         images = []
@@ -291,8 +279,8 @@ def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel
                 refer_images, _ = dataiter.next()
             except :
                 refer_images=old_refer_images
-                
-            images.append(run_generator(z, c,refer_images))
+             
+            images.append(run_generator(z, c,refer_images,opts.morph))
         images = torch.cat(images)
         if images.shape[1] == 1:
             images = images.repeat([1, 3, 1, 1])
@@ -302,6 +290,16 @@ def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel
     return stats
 
 #----------------------------------------------------------------------------
+def get_data_loader(opts,batch_size,data_loader_kwargs=None,max_items=None):
+    dataset = dnnlib.util.construct_class_by_name(**opts.dataset_kwargs)
+    if data_loader_kwargs is None:
+        data_loader_kwargs = dict(pin_memory=True, num_workers=3, prefetch_factor=2)
+    num_items = len(dataset)
+    if max_items is not None:
+        num_items = min(num_items, max_items)
+    item_subset = [(i * opts.num_gpus + opts.rank) % num_items for i in range((num_items - 1) // opts.num_gpus + 1)]
+    dataloader=torch.utils.data.DataLoader(dataset=dataset, sampler=item_subset, batch_size=batch_size, **data_loader_kwargs)
+    return dataset,dataloader
 
 def compute_feature_stats_for_reconstruct(opts, detector_url, detector_kwargs, rel_lo=0, rel_hi=1, batch_size=32, batch_gen=None, jit=False, data_loader_kwargs=None, max_items=None,  **stats_kwargs):
     if batch_gen is None:
@@ -333,24 +331,22 @@ def compute_feature_stats_for_reconstruct(opts, detector_url, detector_kwargs, r
 def reconstruct_image(images,opts,  batch_size,dataset=None  ):
     G = copy.deepcopy(opts.G).eval().requires_grad_(False).to(opts.device)
     D=copy.deepcopy(opts.D).eval().requires_grad_(False).to(opts.device)
-    # vae_gan=copy.deepcopy(opts.vae_gan).eval().requires_grad_(False).to(opts.device)
-    vae_gan= opts.vae_gan 
     real_c=generate_c(opts,dataset,batch_size)
-    reconstructed_img=reconstruct(images ,  G,D,real_c,vae_gan,opts.device,G_kwargs=opts.G_kwargs  )
+    reconstructed_img=reconstruct(images ,  G,D,real_c,opts.morph,opts.device,G_kwargs=opts.G_kwargs  )
 
     return reconstructed_img
 
 
 
-def reconstruct(images ,   G,D,real_c,vae_gan,device=None, G_kwargs=None   ):
+def reconstruct(images ,   G,D,real_c,morph=None,device=None, G_kwargs=None   ):
     if G_kwargs==None:
         G_kwargs=   dnnlib.EasyDict()
     if device!=None:
         images=images.to( device)
     processed_iamges=(images.to(torch.float32) / 127.5 - 1)
-    reconstructed_img,_,_=vae_gan(processed_iamges , real_c,False, **G_kwargs)
-    # _,generated_z ,_,_,inject_info =  D(processed_iamges , real_c,"encoder" )
-    # reconstructed_img = G(z=generated_z, c=real_c,inject_info=inject_info, **G_kwargs)
+    _,generated_z ,_,_,inject_info =  D(processed_iamges , real_c,"encoder" )
+    generated_z=morph.morph_z(generated_z,real_c,G,D,processed_iamges)   
+    reconstructed_img = G(z=generated_z, c=real_c,inject_info=inject_info, **G_kwargs)
     reconstructed_img = (reconstructed_img * 127.5 + 128).clamp(0, 255).to(torch.uint8)
     return reconstructed_img
 
