@@ -77,7 +77,7 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--augpipe', help='Augmentation pipeline [default: bgc]', type=click.Choice(['blit', 'geom', 'color', 'filter', 'noise', 'cutout', 'bg', 'bgc', 'bgcf', 'bgcfn', 'bgcfnc']))
 
 # Transfer learning.
-@click.option('--resume', help='Resume training [default: noresume]', metavar='PKL',default="/home/barry/workspace/code/referredModels/stylegan2-ada-pytorch/training-runs/00448-cifar10-fine_tune3-resumecustom-GAN_VAE_fine_tune_gpen/network-snapshot-007862.pkl") #"https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/paper-fig11b-cifar10/cifar10u-cifar-ada-best-fid.pkl"
+@click.option('--resume', help='Resume training [default: noresume]', metavar='PKL') #,default="/home/barry/workspace/code/referredModels/stylegan2-ada-pytorch/training-runs/00448-cifar10-fine_tune3-resumecustom-GAN_VAE_fine_tune_gpen/network-snapshot-007862.pkl"  "https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/paper-fig11b-cifar10/cifar10u-cifar-ada-best-fid.pkl"
  
 @click.option('--freezed', help='Freeze-D [default: 0 layers]', type=int, metavar='INT')
 @click.option('--freeze_type', help='  [default: ]', type=click.Choice(["d_and_e","e", "g_d_e"   ]))
@@ -93,7 +93,7 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--vae_alpha_g', help='alpha for vae loss', type=float)
 @click.option('--vae_alpha_d', help='alpha for vae loss', type=float)
 @click.option('--vae_beta', help='beta for vae loss', type=float)
-@click.option('--mode', help=' ', type=click.Choice(['test', 'train','hyper_search','debug','fine_tune' ]))
+@click.option('--mode', help=' ',default="train", type=click.Choice(['test', 'train','hyper_search','debug','fine_tune' ]))
 @click.option('--sample_num', help=' ', type=int, metavar='INT')
 @click.option('--remark', help=' ', type=str)
 @click.option('--model_type', help=' ', type=str) #click.Choice(['SNGAN','SNGAN_VAE','GAN_VAE_fine_tune_inject','GAN_VAE_fine_tune_vae_inject','GAN_VAE_fine_tune','GAN_VAE_fine_tune_vae', 'autoencoder_by_GAN','VAE_by_GAN',  'GAN_VAE','VAE', 'DCGAN_VAE', 'GAN_VAE_DEMO'])
@@ -105,7 +105,7 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--verbose', help='Print optional information', type=bool, default=True, metavar='BOOL', show_default=True)
 @click.option('--lr', help='lr', type=float)
 @click.option('--lan_step_lr', default=0.5, type=float)
-@click.option('--lan_steps',  default=10, type=int)
+@click.option('--lan_steps',  default=0, type=int)
 def main(ctx, outdir, dry_run, **config_kwargs):
     """Train a GAN using the techniques described in the paper
     "Training Generative Adversarial Networks with Limited Data".

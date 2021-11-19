@@ -201,13 +201,12 @@ def training_loop(
         # Fetch training data.
         phase_real_img,phase_real_c,all_gen_z,all_gen_c=fetch_training_data(training_set_iterator,device,batch_size,phases,batch_gpu,training_set,G)
          
-        test_flag=True #TODO 
-        if not test_flag:
-            # Execute training phases.
-            reconstruct_loss=execute_training_phases(phase_real_img,phase_real_c,all_gen_z,all_gen_c,device, batch_idx,phases,batch_size,batch_gpu,num_gpus,loss,model_attribute)
+   
+        # Execute training phases.
+        reconstruct_loss=execute_training_phases(phase_real_img,phase_real_c,all_gen_z,all_gen_c,device, batch_idx,phases,batch_size,batch_gpu,num_gpus,loss,model_attribute)
 
-            # Update G_ema.
-            update_G_ema(G,G_ema,ema_kimg,cur_nimg,ema_rampup,batch_size)
+        # Update G_ema.
+        update_G_ema(G,G_ema,ema_kimg,cur_nimg,ema_rampup,batch_size)
          
         # Update state.
         cur_nimg += batch_size
@@ -243,9 +242,7 @@ def training_loop(
 
         # Evaluate metrics.  
         evaluate_metrics(snapshot_data,snapshot_pkl,metrics,num_gpus,rank,device,training_set_kwargs,run_dir,stats_metrics,image_snapshot_ticks,done,cur_tick,mode,None,vae_gan)
-         
-        if   test_flag:
-            break
+   
 
         # Collect statistics.
         for phase in phases:
@@ -337,7 +334,7 @@ def construct_networks(rank,training_set,G_kwargs,D_kwargs,VAE_kwargs,device,mod
     G=G.to(device)
     D=D.to(device)
     # G = dnnlib.util.construct_class_by_name(**G_kwargs, **common_kwargs).train() 
-    morphing=  Morphing(morph_kwargs.lan_step_lr,morph_kwargs.lan_steps,batch_size,morph_kwargs.z_dim,None)
+    morphing=  Morphing(morph_kwargs.lan_step_lr,morph_kwargs.lan_steps )
     morphing=morphing.requires_grad_(False)
     if not config.is_separate_update_for_vae:
         vae_gan=dnnlib.util.construct_class_by_name(D,G.mapping,G.synthesis,G,config.is_mapping, 

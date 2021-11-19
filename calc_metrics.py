@@ -168,6 +168,7 @@ def calc_metrics(tuner_config, ctx, network_pkl, metrics, data, mirror, gpus, ve
 
     # Validate arguments.
     args = dnnlib.EasyDict(metrics=metrics, num_gpus=gpus, network_pkl=network_pkl, verbose=verbose)
+    args.mode=mode 
     if not all(metric_main.is_valid_metric(metric) for metric in args.metrics):
         ctx.fail('\n'.join(['--metrics can only contain the following values:'] + metric_main.list_valid_metrics()))
     if not args.num_gpus >= 1:
