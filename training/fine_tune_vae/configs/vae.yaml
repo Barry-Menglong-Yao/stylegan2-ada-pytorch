@@ -7,7 +7,7 @@ exp_params:
   dataset: cifar10 #
   data_path: "../../../data/cv/"
   img_size: 32
-  batch_size: 64 # Better to have a square number
+  batch_size: 64 # Better to have a square number 64
   LR: 0.001
   weight_decay: 0.0
   scheduler_gamma: 0.95

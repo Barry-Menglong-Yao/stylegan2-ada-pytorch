@@ -1,0 +1,10 @@
+CUDA_VISIBLE_DEVICES=1 python train.py --outdir=~/training-runs --data=/media/cchen/StorageDisk/barry/datasets/images/celebA64.zip --gpus=1 --resume=https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/transfer-learning-source-nets/celebahq-res256-mirror-paper256-kimg100000-ada-target0.5.pkl --model_type=GAN_VAE_fine_tune_gpen --vae_alpha_g=81.3214 --vae_alpha_d=81.3214 --vae_beta=1.42884 
+
+CUDA_VISIBLE_DEVICES=1 python dataset_tool.py --source=/media/cchen/StorageDisk/barry/datasets/images/celebA.zip --dest=/media/cchen/StorageDisk/barry/datasets/images/celebA64.zip --width=64 --height=64 --transform=center-crop
+
+
+CUDA_VISIBLE_DEVICES=2 python train.py --outdir=~/training-runs --data=/media/cchen/StorageDisk/barry/datasets/images/celeba/img_align_celeba/celeba64.zip --gpus=1 --model_type=GAN_VAE_fine_tune_gpen --vae_alpha_g=81.3214 --vae_alpha_d=81.3214 --vae_beta=1.42884  --mode=fine_tune  --cfg=fine_tune3 --resume=https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/transfer-learning-source-nets/celebahq-res256-mirror-paper256-kimg100000-ada-target0.5.pkl 
+
+CUDA_VISIBLE_DEVICES=2 python train.py --outdir=~/training-runs --data=/media/cchen/StorageDisk/barry/datasets/images/celeba/img_align_celeba/celeba64.zip --gpus=1 --model_type=GAN_VAE_fine_tune_gpen --vae_alpha_g=81.3214 --vae_alpha_d=81.3214 --vae_beta=1.42884  --mode=fine_tune  --cfg=fine_tune3 --resume=celebahq256 
+
+CUDA_VISIBLE_DEVICES=2 python train.py --outdir=~/training-runs --data=/media/cchen/StorageDisk/barry/datasets/images/celeba/img_align_celeba/celeba64.zip --gpus=1  --model_type=GAN_VAE_fine_tune_gpen --vae_alpha_g=81.3214 --vae_alpha_d=81.3214 --vae_beta=1.42884  --mode=fine_tune  --cfg=paper1024 --mirror=1 --resume=ffhq1024 --snap=10

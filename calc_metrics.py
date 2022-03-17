@@ -72,7 +72,7 @@ def subprocess_fn(rank, args, temp_dir,mode):
             print(f'Calculating {metric}...')
         progress = metric_utils.ProgressMonitor(verbose=args.verbose)
         result_dict = metric_main.calc_metric(metric=metric, G=G, dataset_kwargs=args.dataset_kwargs,
-            num_gpus=args.num_gpus, rank=rank, device=device, progress=progress,D=D,morphing=morphing)
+            num_gpus=args.num_gpus, rank=rank, device=device, progress=progress,D=D,vae_gan=None,morphing=morphing)
         if rank == 0:
             metric_main.report_metric(result_dict, run_dir=args.run_dir, snapshot_pkl=args.network_pkl)
         if rank == 0 and args.verbose:

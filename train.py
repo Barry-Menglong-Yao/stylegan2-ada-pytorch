@@ -441,7 +441,7 @@ def setup_training_loop_kwargs(
         'fine_tune':     dict(ref_gpus=2,  kimg=100000, mb=64, mbstd=32, fmaps=1,   lrate=0.00025, gamma=0.01, ema=500, ramp=0.05, map=2),
         'fine_tune2':     dict(ref_gpus=2,  kimg=100000, mb=64, mbstd=32, fmaps=1,   lrate=0.000025, gamma=0.01, ema=500, ramp=0.05, map=2),
         'fine_tune3':     dict(ref_gpus=2,  kimg=100000, mb=64, mbstd=32, fmaps=1,   lrate=0.0005, gamma=0.01, ema=500, ramp=0.05, map=2),
-        'fine_tune4':     dict(ref_gpus=2,  kimg=100000, mb=64, mbstd=32, fmaps=1,   lrate=0.001, gamma=0.01, ema=500, ramp=0.05, map=2),
+        'fine_tune4':     dict(ref_gpus=2,  kimg=100000,mb=64, mbstd=32, fmaps=1,   lrate=0.001, gamma=0.01, ema=500, ramp=0.05, map=2),
         'fine_tune5':     dict(ref_gpus=2,  kimg=100000, mb=64, mbstd=32, fmaps=1,   lrate=0.0002, gamma=0.01, ema=500, ramp=0.05, map=2),
     }
 

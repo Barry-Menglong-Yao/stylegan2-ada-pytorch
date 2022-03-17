@@ -20,7 +20,7 @@ import dnnlib
 
 class MetricOptions:
     def __init__(self, G=None, G_kwargs={}, dataset_kwargs={}, num_gpus=1, rank=0, device=None, progress=None, 
-    cache=True,D=None,morphing=None):
+    cache=True,D=None,vae_gan=None,morph=None):
         assert 0 <= rank < num_gpus
         self.G              = G
         self.G_kwargs       = dnnlib.EasyDict(G_kwargs)
@@ -31,7 +31,8 @@ class MetricOptions:
         self.progress       = progress.sub() if progress is not None and rank == 0 else ProgressMonitor()
         self.cache          = cache
         self.D=D
-        self.morph=morphing
+        self.morph=morph
+        self.vae_gan=vae_gan
 
 #----------------------------------------------------------------------------
 
@@ -232,6 +233,11 @@ def compute_feature_stats_for_dataset(opts, detector_url, detector_kwargs, rel_l
 
 #----------------------------------------------------------------------------
 
+def need_sample(morph): 
+    if morph!=None and morph.lan_steps >0:
+        return True
+    else:
+        return False
 
 def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel_lo=0, rel_hi=1, batch_size=64, batch_gen=None, jit=False, **stats_kwargs):
     if batch_gen is None:
@@ -247,7 +253,8 @@ def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel
     def run_generator(z, c,refer_images,morph):
         refer_images=refer_images.to( opts.device)
         processed_refer_images=(refer_images.to(torch.float32) / 127.5 - 1)
-        z=morph.morph_z(z,c,G,D,processed_refer_images)
+        if need_sample(morph):
+            z=morph.morph_z(z,c,G,D,processed_refer_images)
         img = G(z=z, c=c,inject_info=None, **opts.G_kwargs)
         img = (img * 127.5 + 128).clamp(0, 255).to(torch.uint8)
         return img
@@ -345,7 +352,8 @@ def reconstruct(images ,   G,D,real_c,morph=None,device=None, G_kwargs=None   ):
         images=images.to( device)
     processed_iamges=(images.to(torch.float32) / 127.5 - 1)
     _,generated_z ,_,_,inject_info =  D(processed_iamges , real_c,"encoder" )
-    generated_z=morph.morph_z(generated_z,real_c,G,D,processed_iamges)   
+    
+    # generated_z=morph.morph_z(generated_z,real_c,G,D,processed_iamges)   
     reconstructed_img = G(z=generated_z, c=real_c,inject_info=inject_info, **G_kwargs)
     reconstructed_img = (reconstructed_img * 127.5 + 128).clamp(0, 255).to(torch.uint8)
     return reconstructed_img

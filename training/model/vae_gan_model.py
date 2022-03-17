@@ -41,7 +41,7 @@ class VaeGan(torch.nn.Module):
             reconstructed_img = self.G_synthesis(ws,inject_info, **synthesis_kwargs)
         return  reconstructed_img
 
-    def vae_loss(self, reconstructed_img, real_img,mu,log_var,vae_beta,vae_alpha_d):
+    def vae_loss(self, reconstructed_img, real_img,mu,log_var,vae_beta,vae_alpha_d,kld_weight=None):
         loss = torch.nn.MSELoss(reduction='none')
         loss_Emain_reconstruct = loss(reconstructed_img, real_img)
         loss_Emain_reconstruct=loss_Emain_reconstruct.view(loss_Emain_reconstruct.shape[0],-1)
