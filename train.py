@@ -19,7 +19,7 @@ import json
 import tempfile
 import torch
 import dnnlib
-
+import wandb 
 from training import training_loop
 from metrics import metric_main
 from torch_utils import training_stats
@@ -88,13 +88,13 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--nobench', help='Disable cuDNN benchmarking', type=bool, metavar='BOOL')
 @click.option('--allow-tf32', help='Allow PyTorch to use TF32 internally', type=bool, metavar='BOOL')
 @click.option('--workers', help='Override number of DataLoader workers', type=int, metavar='INT')
-
+@click.option('--drop_last', help='dataloader drop_last', type=bool, metavar='BOOL',default=False)
 #vae
 @click.option('--vae_alpha_g', help='alpha for vae loss', type=float)
 @click.option('--vae_alpha_d', help='alpha for vae loss', type=float)
 @click.option('--vae_beta', help='beta for vae loss', type=float)
 @click.option('--mode', help=' ',default="train", type=click.Choice(['test', 'train','hyper_search','debug','fine_tune' ]))
-@click.option('--sample_num', help=' ', type=int, metavar='INT')
+@click.option('--sample_num', help=' ', type=int, metavar='INT',default=28)
 @click.option('--remark', help=' ', type=str)
 @click.option('--model_type', help=' ', type=str) #click.Choice(['SNGAN','SNGAN_VAE','GAN_VAE_fine_tune_inject','GAN_VAE_fine_tune_vae_inject','GAN_VAE_fine_tune','GAN_VAE_fine_tune_vae', 'autoencoder_by_GAN','VAE_by_GAN',  'GAN_VAE','VAE', 'DCGAN_VAE', 'GAN_VAE_DEMO'])
 @click.option('--epoch', help='Random seed [default: 0]', type=int,default=-1, metavar='INT')
@@ -230,7 +230,8 @@ def train_cifar(tuner_config, ctx, outdir, dry_run, config_kwargs  ):
     prev_run_ids = [re.match(r'^\d+', x) for x in prev_run_dirs]
     prev_run_ids = [int(x.group()) for x in prev_run_ids if x is not None]
     cur_run_id = max(prev_run_ids, default=-1) + 1
-    args.run_dir = os.path.join(outdir, f'{cur_run_id:05d}-{run_desc}')
+    run_name=f'{cur_run_id:05d}-{run_desc}'
+    args.run_dir = os.path.join(outdir,  run_name)
     assert not os.path.exists(args.run_dir)
 
  
@@ -270,9 +271,9 @@ def train_cifar(tuner_config, ctx, outdir, dry_run, config_kwargs  ):
         torch.multiprocessing.set_start_method('spawn')
         with tempfile.TemporaryDirectory() as temp_dir:
             if args.num_gpus == 1:
-                subprocess_fn(rank=0, args=args, temp_dir=temp_dir)
+                subprocess_fn(rank=0, args=args, temp_dir=temp_dir,run_name=run_name)
             else:
-                torch.multiprocessing.spawn(fn=subprocess_fn, args=(args, temp_dir), nprocs=args.num_gpus)
+                torch.multiprocessing.spawn(fn=subprocess_fn, args=(args, temp_dir,run_name), nprocs=args.num_gpus)
     else:
         fine_tune(args)
 
@@ -335,11 +336,13 @@ def setup_training_loop_kwargs(
     freeze_type=None,
     lr=None,
     lan_step_lr=None,
-    lan_steps=None
+    lan_steps=None,
+    drop_last=False
 ):
     args = dnnlib.EasyDict()
     
     args.verbose=verbose
+    
     args.freeze_type=freeze_type
     # ------------------------------------------
     # General options: gpus, snap, metrics, seed
@@ -383,7 +386,7 @@ def setup_training_loop_kwargs(
     assert data is not None
     assert isinstance(data, str)
     args.training_set_kwargs = dnnlib.EasyDict(class_name='training.dataset.ImageFolderDataset', path=data, use_labels=True, max_size=None, xflip=False)
-    args.data_loader_kwargs = dnnlib.EasyDict(pin_memory=True, num_workers=3, prefetch_factor=2)
+    args.data_loader_kwargs = dnnlib.EasyDict(pin_memory=True, num_workers=3, prefetch_factor=2,drop_last=drop_last)
     try:
         training_set = dnnlib.util.construct_class_by_name(**args.training_set_kwargs) # subclass of training.dataset.Dataset
         args.training_set_kwargs.resolution = training_set.resolution # be explicit about resolution
@@ -475,11 +478,12 @@ def setup_training_loop_kwargs(
     args.D_opt_kwargs = dnnlib.EasyDict(class_name='torch.optim.Adam', lr=spec.lrate, betas=[0,0.99], eps=1e-8)
     
     
-    if  is_GAN_VAE()==True:
-        args.D_kwargs.epilogue_kwargs.model_type= model_type
-        args.G_kwargs.is_mapping=config.is_mapping
-        args.D_kwargs.inject_type=model_attribute.inject_type
-        args.D_kwargs.model_attribute=model_attribute
+    args.D_kwargs.epilogue_kwargs.model_type= model_type
+    args.G_kwargs.is_mapping=config.is_mapping
+    args.D_kwargs.inject_type=model_attribute.inject_type
+    args.D_kwargs.model_attribute=model_attribute
+    if  is_GAN_VAE(model_attribute)==True:
+        
         args.loss_kwargs = dnnlib.EasyDict(class_name='training.loss.GANVAELoss', r1_gamma=spec.gamma) 
  
         args.loss_kwargs.vae_alpha_d=vae_alpha_d
@@ -672,7 +676,7 @@ def setup_training_loop_kwargs(
 #----------------------------------------------------------------------------
  
 
-def subprocess_fn(rank, args, temp_dir):
+def subprocess_fn(rank, args, temp_dir,run_name):
     dnnlib.util.Logger(file_name=os.path.join(args.run_dir, 'log.txt'), file_mode='a', should_flush=True)
 
     # Init torch.distributed.
@@ -692,6 +696,7 @@ def subprocess_fn(rank, args, temp_dir):
         custom_ops.verbosity = 'none'
 
     # Execute training loop.
+    wandb.init(project=f"VAE-{ args.mode}",config=args,name=run_name)
     training_loop.training_loop(rank=rank, **args)
 
 

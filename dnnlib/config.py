@@ -1,4 +1,5 @@
 from dnnlib import EasyDict
+from dnnlib.enums import DgmType
 
 config =  EasyDict()
 
@@ -18,8 +19,12 @@ config.verbose = False
 
 
 
-def is_GAN_VAE():
+def is_GAN_VAE(    model_attribute):
     return True
+    # if model_attribute.dgm_type==DgmType.GAN:
+    #     return False
+    # else:
+    #     return True
  
 
 

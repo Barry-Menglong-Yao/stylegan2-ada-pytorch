@@ -115,6 +115,7 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--lan_step_lr', default=0.3, type=float) #0.1
 @click.option('--lan_steps',  default=10, type=int) #1
 @click.option('--mode', help=' ',default='test', type=click.Choice(['test','hyper_search' ]))
+@click.option('--drop_last', help='dataloader drop_last', type=bool, metavar='BOOL',default=False)
 def main(ctx, network_pkl, metrics, data, mirror, gpus, verbose,lan_step_lr,lan_steps,mode):
     if mode!="hyper_search":
         calc_metrics(None,ctx, network_pkl, metrics, data, mirror, gpus, verbose,lan_step_lr,lan_steps,mode)
@@ -198,7 +199,8 @@ def calc_metrics(tuner_config, ctx, network_pkl, metrics, data, mirror, gpus, ve
     args.dataset_kwargs.use_labels = (args.G.c_dim != 0)
     if mirror is not None:
         args.dataset_kwargs.xflip = mirror
-
+    
+    args.data_loader_kwargs = dnnlib.EasyDict(pin_memory=True, num_workers=3, prefetch_factor=2,drop_last=args.drop_last)
     # Print dataset options.
     if args.verbose:
         print('Dataset options:')

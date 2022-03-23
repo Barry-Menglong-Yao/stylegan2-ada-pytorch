@@ -24,7 +24,7 @@ def compute_fid(opts, max_real, num_gen,fid_type='generate'):
 
     mu_real, sigma_real = metric_utils.compute_feature_stats_for_dataset(
         opts=opts, detector_url=detector_url, detector_kwargs=detector_kwargs,
-        rel_lo=0, rel_hi=0, capture_mean_cov=True, max_items=max_real).get_mean_cov()
+        rel_lo=0, rel_hi=0,data_loader_kwargs=opts.data_loader_kwargs, capture_mean_cov=True, max_items=max_real).get_mean_cov()
 
     if fid_type=='generate':
         mu_gen, sigma_gen = metric_utils.compute_feature_stats_for_generator(
@@ -33,7 +33,7 @@ def compute_fid(opts, max_real, num_gen,fid_type='generate'):
     else:
         mu_gen, sigma_gen = metric_utils.compute_feature_stats_for_reconstruct(
             opts=opts, detector_url=detector_url, detector_kwargs=detector_kwargs,
-            rel_lo=0, rel_hi=1, capture_mean_cov=True, max_items=max_real ).get_mean_cov()
+            rel_lo=0, rel_hi=1, data_loader_kwargs=opts.data_loader_kwargs,capture_mean_cov=True, max_items=max_real ).get_mean_cov()
 
     if opts.rank != 0:
         return float('nan')

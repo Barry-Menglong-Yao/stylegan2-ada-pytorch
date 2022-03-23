@@ -20,7 +20,7 @@ import dnnlib
 
 class MetricOptions:
     def __init__(self, G=None, G_kwargs={}, dataset_kwargs={}, num_gpus=1, rank=0, device=None, progress=None, 
-    cache=True,D=None,vae_gan=None,morph=None):
+    cache=True,D=None,vae_gan=None,morph=None,data_loader_kwargs=None):
         assert 0 <= rank < num_gpus
         self.G              = G
         self.G_kwargs       = dnnlib.EasyDict(G_kwargs)
@@ -33,6 +33,10 @@ class MetricOptions:
         self.D=D
         self.morph=morph
         self.vae_gan=vae_gan
+        if data_loader_kwargs!=None:
+            self.data_loader_kwargs=dnnlib.EasyDict(data_loader_kwargs)
+        else:
+            self.data_loader_kwargs=None
 
 #----------------------------------------------------------------------------
 
@@ -308,7 +312,8 @@ def get_data_loader(opts,batch_size,data_loader_kwargs=None,max_items=None):
     dataloader=torch.utils.data.DataLoader(dataset=dataset, sampler=item_subset, batch_size=batch_size, **data_loader_kwargs)
     return dataset,dataloader
 
-def compute_feature_stats_for_reconstruct(opts, detector_url, detector_kwargs, rel_lo=0, rel_hi=1, batch_size=32, batch_gen=None, jit=False, data_loader_kwargs=None, max_items=None,  **stats_kwargs):
+def compute_feature_stats_for_reconstruct(opts, detector_url, detector_kwargs, rel_lo=0, rel_hi=1, batch_size=32, batch_gen=None,
+ jit=False, data_loader_kwargs=None, max_items=None,  **stats_kwargs):
     if batch_gen is None:
         batch_gen = min(batch_size, 4)
     dataset = dnnlib.util.construct_class_by_name(**opts.dataset_kwargs)
@@ -324,7 +329,7 @@ def compute_feature_stats_for_reconstruct(opts, detector_url, detector_kwargs, r
 
     # Main loop.
     item_subset = [(i * opts.num_gpus + opts.rank) % num_items for i in range((num_items - 1) // opts.num_gpus + 1)]
-    for images, _labels in torch.utils.data.DataLoader(dataset=dataset, sampler=item_subset, batch_size=batch_size, **data_loader_kwargs):
+    for images, _labels in torch.utils.data.DataLoader(dataset=dataset, sampler=item_subset, batch_size=batch_size,  **data_loader_kwargs):
         if images.shape[1] == 1:
             images = images.repeat([1, 3, 1, 1])
         reconstructed_images=reconstruct_image(images,opts,  images.shape[0],dataset  )

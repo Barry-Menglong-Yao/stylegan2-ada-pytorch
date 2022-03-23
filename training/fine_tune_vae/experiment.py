@@ -130,7 +130,7 @@ class VAEXperiment(pl.LightningModule):
         stats_metrics={}
         # Evaluate metrics.  
         training_loop.evaluate_metrics(snapshot_data,snapshot_pkl,args.metrics,args.num_gpus,rank,device,args.training_set_kwargs,args.run_dir,
-        stats_metrics,args.image_snapshot_ticks,done,self.current_epoch,args.mode,0)
+        stats_metrics,args.image_snapshot_ticks,done,self.current_epoch,args.mode,0,args.data_loader_kwargs)
          
  
 

@@ -36,6 +36,7 @@ import sys
 from datetime import datetime
 from dnnlib.config import config
 from ray import tune
+import wandb
 
 #----------------------------------------------------------------------------
 
@@ -175,7 +176,8 @@ def training_loop(
     ddp_modules=setup_DDP(rank,G,D,G_ema,vae_gan,device,augment_pipe,num_gpus,model_attribute)
      
     # Setup training phases.
-    phases,loss=setup_training_phases(device,ddp_modules,loss_kwargs,G,D,vae_gan,G_opt_kwargs,G_reg_interval,D_opt_kwargs,D_reg_interval,rank,model_attribute)
+    phases,loss=setup_training_phases(device,ddp_modules,loss_kwargs,G,D,vae_gan,G_opt_kwargs,G_reg_interval,D_opt_kwargs,
+    D_reg_interval,rank,model_attribute,mode)
  
 
     # Export sample images.
@@ -241,7 +243,8 @@ def training_loop(
          
 
         # Evaluate metrics.  
-        evaluate_metrics(snapshot_data,snapshot_pkl,metrics,num_gpus,rank,device,training_set_kwargs,run_dir,stats_metrics,image_snapshot_ticks,done,cur_tick,mode,None,vae_gan)
+        evaluate_metrics(snapshot_data,snapshot_pkl,metrics,num_gpus,rank,device,training_set_kwargs,run_dir,stats_metrics,image_snapshot_ticks,done,cur_tick,mode,None,vae_gan,
+        data_loader_kwargs)
    
 
         # Collect statistics.
@@ -405,7 +408,8 @@ def setup_DDP(rank,G,D,G_ema,vae_gan,device,augment_pipe,num_gpus,model_attribut
             ddp_modules[name] = module
     return ddp_modules
 
-def setup_training_phases(device,ddp_modules,loss_kwargs,G,D,vae_gan,G_opt_kwargs,G_reg_interval,D_opt_kwargs,D_reg_interval,rank,model_attribute):
+def setup_training_phases(device,ddp_modules,loss_kwargs,G,D,vae_gan,G_opt_kwargs,G_reg_interval,D_opt_kwargs,D_reg_interval,
+    rank,model_attribute,mode):
     if rank == 0:
         print('Setting up training phases...')
     loss = dnnlib.util.construct_class_by_name(device=device, **ddp_modules, **loss_kwargs) # subclass of training.loss.Loss
@@ -450,6 +454,7 @@ def setup_training_phases(device,ddp_modules,loss_kwargs,G,D,vae_gan,G_opt_kwarg
         if rank == 0:
             phase.start_event = torch.cuda.Event(enable_timing=True)
             phase.end_event = torch.cuda.Event(enable_timing=True)
+    
     return phases,loss
 
 
@@ -596,15 +601,15 @@ def save_network(cur_tick,training_set_kwargs,G,D,G_ema,augment_pipe,done,networ
                 module = copy.deepcopy(module).eval().requires_grad_(False).cpu()
             snapshot_data[name] = module
             del module # conserve memory
-        #TODO snapshot_pkl = os.path.join(run_dir, f'network-snapshot-{cur_nimg//1000:06d}.pkl')
-        snapshot_pkl = os.path.join(run_dir, f'network-snapshot.pkl')
+        snapshot_pkl = os.path.join(run_dir, f'network-snapshot-{cur_nimg//1000:06d}.pkl')
+        # snapshot_pkl = os.path.join(run_dir, f'network-snapshot.pkl')
         if rank == 0:
             with open(snapshot_pkl, 'wb') as f:
                 pickle.dump(snapshot_data, f)
     return snapshot_data,snapshot_pkl
 
 def evaluate_metrics(snapshot_data,snapshot_pkl,metrics,num_gpus,rank,device,training_set_kwargs,run_dir,stats_metrics,
-image_snapshot_ticks,done,cur_tick,mode,reconstruct_loss_value,vae_gan):
+image_snapshot_ticks,done,cur_tick,mode,reconstruct_loss_value,vae_gan,data_loader_kwargs):
     if (snapshot_data is not None) and (len(metrics) > 0):
         if rank == 0:
             print('Evaluating metrics...')
@@ -612,11 +617,12 @@ image_snapshot_ticks,done,cur_tick,mode,reconstruct_loss_value,vae_gan):
         for metric in metrics: 
             result_dict = metric_main.calc_metric(metric=metric, G=snapshot_data['G_ema'],
                 dataset_kwargs=training_set_kwargs, num_gpus=num_gpus, rank=rank, device=device,D=snapshot_data['D'],
-                vae_gan=vae_gan,morph=None)
+                vae_gan=vae_gan,morph=None,data_loader_kwargs=data_loader_kwargs)
             if rank == 0:
                 metric_main.report_metric(result_dict, run_dir=run_dir, snapshot_pkl=snapshot_pkl)
             stats_metrics.update(result_dict.results)
             total_result_dict.update(result_dict.results)
+        wandb.log(total_result_dict)
         if mode=="hyper_search":
             if (rank == 0) and (image_snapshot_ticks is not None) and (done or cur_tick % image_snapshot_ticks == 0):
                  

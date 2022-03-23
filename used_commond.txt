@@ -8,3 +8,7 @@ CUDA_VISIBLE_DEVICES=2 python train.py --outdir=~/training-runs --data=/media/cc
 CUDA_VISIBLE_DEVICES=2 python train.py --outdir=~/training-runs --data=/media/cchen/StorageDisk/barry/datasets/images/celeba/img_align_celeba/celeba64.zip --gpus=1 --model_type=GAN_VAE_fine_tune_gpen --vae_alpha_g=81.3214 --vae_alpha_d=81.3214 --vae_beta=1.42884  --mode=fine_tune  --cfg=fine_tune3 --resume=celebahq256 
 
 CUDA_VISIBLE_DEVICES=2 python train.py --outdir=~/training-runs --data=/media/cchen/StorageDisk/barry/datasets/images/celeba/img_align_celeba/celeba64.zip --gpus=1  --model_type=GAN_VAE_fine_tune_gpen --vae_alpha_g=81.3214 --vae_alpha_d=81.3214 --vae_beta=1.42884  --mode=fine_tune  --cfg=paper1024 --mirror=1 --resume=ffhq1024 --snap=10
+
+
+
+CUDA_VISIBLE_DEVICES=0 python train.py --outdir=/media/cchen/StorageDisk/barry/models/stylegan2-ada --data=/media/cchen/StorageDisk/barry/datasets/images/celeba/img_align_celeba/celeba64.zip --gpus=1  --model_type=StyleGAN2_ada --vae_alpha_g=81.3214 --vae_alpha_d=81.3214 --vae_beta=1.42884   --cfg=auto --drop_last=1 --metrics=fid50k_full --resume=training-runs/00549-celeba64-auto1-StyleGAN2_ada/network-snapshot.pkl
