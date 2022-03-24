@@ -487,7 +487,7 @@ class SynthesisNetwork(torch.nn.Module):
                     noise_conv1=inject_info["conv0"][res]
                     
             x, img = block(x, img, cur_ws,noise_conv0=noise_conv0,noise_conv1=noise_conv1, **block_kwargs) #32,512,4,4:32,3,4,4;32,512,8,8:32,3,8,8;32,512,16,16:32,3,16,16;32,512,32,32:32,3,32,32;
-            if inject_info!=None : #single_channel
+            if inject_info!=None : #inject_type=single_channel
                 x=inject(inject_info,x,res) #sometimes will not use this logic
         return img
 
@@ -746,6 +746,10 @@ class DiscriminatorEpilogue(torch.nn.Module):
 
 #----------------------------------------------------------------------------
 
+class Injector(torch.nn.Module):
+
+
+
 @persistence.persistent_class
 class Discriminator(torch.nn.Module):
     def __init__(self,
@@ -826,6 +830,7 @@ class Discriminator(torch.nn.Module):
             
             nn.ReLU())  
         elif inject_type=="gpen":
+            
             for res in [8,16,32]:
                 if  res in self.model_attribute.inject_layer_list:
                     rgb_layer=nn.Sequential(
@@ -877,7 +882,7 @@ class Discriminator(torch.nn.Module):
  
         for res in self.block_resolutions:
             block = getattr(self, f'b{res}')
-            x, img,x_rgb,x_conv0 = block(x, img, **block_kwargs)#None:32,3,32,32;32,512,16,16:None;32,512,8,8:None;32,512,4,4:None
+            x, img,x_rgb,x_conv0 = block(x, img, **block_kwargs)#None:32,3,res,res;32,512,16,16:None;32,512,8,8:None;32,512,4,4:None
             if  res in self.model_attribute.inject_layer_list:
                 if self.inject_type=="gpen":
                     inject_layer_rgb= getattr(self, f'inject_layer_rgb_{res}')

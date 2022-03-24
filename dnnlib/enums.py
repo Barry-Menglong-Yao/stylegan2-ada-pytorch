@@ -48,6 +48,7 @@ class ModelAttribute(Enum):
     GAN_VAE_fine_tune_gpen_repeat_rgb_3 = (DgmType.GAN_VAE, GanType.Stylegan2_ada,"training.model.networks.Generator","training.model.networks.Discriminator",512,"training.model.vae_gan_model.VaeGan",1,"gpen_repeat_rgb",[4,8,16])
     GAN_VAE_fine_tune_gpen_repeat_rgb_single_32 = (DgmType.GAN_VAE, GanType.Stylegan2_ada,"training.model.networks.Generator","training.model.networks.Discriminator",512,"training.model.vae_gan_model.VaeGan",1,"gpen_repeat_rgb",[32])
     GAN_VAE_fine_tune_gpen_rgb_3 = (DgmType.GAN_VAE, GanType.Stylegan2_ada,"training.model.networks.Generator","training.model.networks.Discriminator",512,"training.model.vae_gan_model.VaeGan",1,"gpen_rgb",[4,8,16])
+    GAN_VAE_fine_tune_gpen_64 = (DgmType.GAN_VAE, GanType.Stylegan2_ada,"training.model.networks.Generator","training.model.networks.Discriminator",512,"training.model.vae_gan_model.VaeGan",1,"gpen",[4,8,16,32,64])
     
     
     def __init__(self, dgm_type, gan_type,g_model_name,d_model_name,z_dim,model_name,disc_iters,inject_type,inject_layer_list  ):

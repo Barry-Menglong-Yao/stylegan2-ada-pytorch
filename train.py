@@ -80,7 +80,7 @@ class CommaSeparatedList(click.ParamType):
 @click.option('--resume', help='Resume training [default: noresume]', metavar='PKL') #,default="/home/barry/workspace/code/referredModels/stylegan2-ada-pytorch/training-runs/00448-cifar10-fine_tune3-resumecustom-GAN_VAE_fine_tune_gpen/network-snapshot-007862.pkl"  "https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/paper-fig11b-cifar10/cifar10u-cifar-ada-best-fid.pkl"
  
 @click.option('--freezed', help='Freeze-D [default: 0 layers]', type=int, metavar='INT')
-@click.option('--freeze_type', help='  [default: ]', type=click.Choice(["d_and_e","e", "g_d_e"   ]))
+# @click.option('--freeze_type', help='  [default: ]', type=click.Choice(["d_and_e","e", "g_d_e"   ]))
 
 # Performance options.
 @click.option('--fp32', help='Disable mixed-precision training', type=bool, metavar='BOOL')
@@ -446,6 +446,7 @@ def setup_training_loop_kwargs(
         'fine_tune3':     dict(ref_gpus=2,  kimg=100000, mb=64, mbstd=32, fmaps=1,   lrate=0.0005, gamma=0.01, ema=500, ramp=0.05, map=2),
         'fine_tune4':     dict(ref_gpus=2,  kimg=100000,mb=64, mbstd=32, fmaps=1,   lrate=0.001, gamma=0.01, ema=500, ramp=0.05, map=2),
         'fine_tune5':     dict(ref_gpus=2,  kimg=100000, mb=64, mbstd=32, fmaps=1,   lrate=0.0002, gamma=0.01, ema=500, ramp=0.05, map=2),
+        'fine_tune6':     dict(ref_gpus=1,  kimg=25000, mb=32, mbstd=4, fmaps=0.5,   lrate=0.0005, gamma=0.0256, ema=10, ramp=None, map=2),
     }
 
     assert cfg in cfg_specs
