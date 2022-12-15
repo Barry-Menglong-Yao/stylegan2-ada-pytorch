@@ -11,12 +11,12 @@
             "program": "${file}",
             "console": "integratedTerminal",
             "args": [
-                "--outdir","/media/cchen/StorageDisk/barry/models/stylegan2-ada","--data","/media/cchen/StorageDisk/barry/datasets/images/celeba/img_align_celeba/celeba64.zip",
+                "--outdir","output","--data","/home/data/image/Celeba/celeba64.zip",
                 "--gpus","1","--model_type","GAN_VAE_fine_tune_gpen_64","--vae_alpha_g","81.3214","--vae_alpha_d","81.3214",
                 "--vae_beta","1.42884",
                 "--cfg","fine_tune6","--drop_last","1",
                 "--metrics","fid50k_full",
-                "--resume","/media/cchen/StorageDisk/barry/models/stylegan2-ada/00004-celeba64-auto1-resumecustom-StyleGAN2_ada/network-snapshot-011800.pkl",
+                // "--resume","/media/cchen/StorageDisk/barry/models/stylegan2-ada/00004-celeba64-auto1-resumecustom-StyleGAN2_ada/network-snapshot-011800.pkl",
                 "--sample_num","28"
 
                 //-----

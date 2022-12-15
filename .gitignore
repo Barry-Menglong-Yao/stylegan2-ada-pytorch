@@ -9,3 +9,4 @@ training/fine_tune_vae/logs
 runs/ 
 ~/training-runs/ 
 wandb/ 
+output/ 
